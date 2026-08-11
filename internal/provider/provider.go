@@ -3,7 +3,7 @@ package provider
 import (
 	"context"
 
-	"github.com/ahmedali6/terraform-provider-dokploy/internal/client"
+	"github.com/Feng-Brasil/terraform-provider-dokploy/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/provider"

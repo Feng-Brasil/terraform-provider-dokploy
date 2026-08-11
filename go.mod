@@ -1,4 +1,4 @@
-module github.com/ahmedali6/terraform-provider-dokploy
+module github.com/Feng-Brasil/terraform-provider-dokploy
 
 go 1.25.8
 
