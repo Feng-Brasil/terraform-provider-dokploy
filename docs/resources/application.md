@@ -37,7 +37,7 @@ resource "dokploy_application" "nginx" {
   environment_id = dokploy_environment.production.id
   source_type    = "docker"
   docker_image   = "nginx:alpine"
-  
+
   replicas         = 2
   deploy_on_create = true
 }
@@ -54,7 +54,7 @@ resource "dokploy_application" "private_app" {
   registry_url   = "registry.example.com"
   username       = "deploy"
   password       = var.registry_password
-  
+
   deploy_on_create = true
 }
 ```
@@ -68,20 +68,20 @@ resource "dokploy_application" "api" {
   name           = "api"
   environment_id = dokploy_environment.production.id
   source_type    = "github"
-  
+
   # GitHub settings (using github_* prefix for consistency with other providers)
   github_id         = "your-github-app-installation-id"
   github_owner      = "myorg"
   github_repository = "api"
   github_branch     = "main"
-  
+
   # Build settings (Nixpacks auto-detects your project type)
   build_type = "nixpacks"
-  
+
   # Runtime settings
   auto_deploy      = true
   deploy_on_create = true
-  
+
   # Environment variables
   env = <<-EOT
     NODE_ENV=production
@@ -90,9 +90,9 @@ resource "dokploy_application" "api" {
 }
 ```
 
-~> **Note:** The fields `owner`, `repository`, `branch`, and `build_path` are also available 
-as legacy aliases for `github_owner`, `github_repository`, `github_branch`, and `github_build_path` 
-respectively. The `github_*` prefix is recommended for consistency with other providers 
+~> **Note:** The fields `owner`, `repository`, `branch`, and `build_path` are also available
+as legacy aliases for `github_owner`, `github_repository`, `github_branch`, and `github_build_path`
+respectively. The `github_*` prefix is recommended for consistency with other providers
 (e.g., `gitlab_owner`, `bitbucket_owner`, `gitea_owner`).
 
 ### GitHub Repository with Dockerfile
@@ -102,25 +102,25 @@ resource "dokploy_application" "web" {
   name           = "web"
   environment_id = dokploy_environment.production.id
   source_type    = "github"
-  
+
   github_id         = "your-github-app-installation-id"
   github_owner      = "myorg"
   github_repository = "web-frontend"
   github_branch     = "main"
   github_build_path = "apps/web"  # Monorepo path
-  
+
   # Dockerfile build
   build_type          = "dockerfile"
   dockerfile_path     = "./Dockerfile"
   docker_context_path = "."
   docker_build_stage  = "production"  # Multi-stage build target
-  
+
   # Build arguments
   build_args = <<-EOT
     NODE_VERSION=20
     BUILD_DATE=${timestamp()}
   EOT
-  
+
   auto_deploy      = true
   deploy_on_create = true
 }
@@ -133,14 +133,14 @@ resource "dokploy_application" "gitlab_app" {
   name           = "gitlab-app"
   environment_id = dokploy_environment.production.id
   source_type    = "gitlab"
-  
+
   # GitLab settings
   gitlab_id         = "your-gitlab-integration-id"
   gitlab_project_id = 12345
   gitlab_owner      = "mygroup"
   gitlab_repository = "myproject"
   gitlab_branch     = "main"
-  
+
   build_type       = "nixpacks"
   auto_deploy      = true
   deploy_on_create = true
@@ -154,13 +154,13 @@ resource "dokploy_application" "bitbucket_app" {
   name           = "bitbucket-app"
   environment_id = dokploy_environment.production.id
   source_type    = "bitbucket"
-  
+
   # Bitbucket settings
   bitbucket_id         = "your-bitbucket-integration-id"
   bitbucket_owner      = "myworkspace"
   bitbucket_repository = "myrepo"
   bitbucket_branch     = "main"
-  
+
   build_type       = "nixpacks"
   auto_deploy      = true
   deploy_on_create = true
@@ -174,13 +174,13 @@ resource "dokploy_application" "gitea_app" {
   name           = "gitea-app"
   environment_id = dokploy_environment.production.id
   source_type    = "gitea"
-  
+
   # Gitea settings
   gitea_id         = "your-gitea-integration-id"
   gitea_owner      = "myorg"
   gitea_repository = "myrepo"
   gitea_branch     = "main"
-  
+
   build_type       = "nixpacks"
   auto_deploy      = true
   deploy_on_create = true
@@ -202,17 +202,17 @@ resource "dokploy_application" "custom_git" {
   name           = "custom-app"
   environment_id = dokploy_environment.production.id
   source_type    = "git"
-  
+
   # Custom Git settings
   custom_git_url        = "git@github.com:myorg/private-repo.git"
   custom_git_branch     = "main"
   custom_git_ssh_key_id = dokploy_ssh_key.deploy_key.id
   custom_git_build_path = "."
   enable_submodules     = true
-  
+
   build_type       = "dockerfile"
   dockerfile_path  = "./Dockerfile"
-  
+
   auto_deploy      = true
   deploy_on_create = true
 }
@@ -225,17 +225,17 @@ resource "dokploy_application" "docs" {
   name           = "documentation"
   environment_id = dokploy_environment.production.id
   source_type    = "github"
-  
+
   github_id         = "your-github-app-installation-id"
   github_owner      = "myorg"
   github_repository = "docs"
   github_branch     = "main"
-  
+
   # Static build
   build_type        = "static"
   publish_directory = "build"
   is_static_spa     = true  # Enable SPA routing
-  
+
   auto_deploy      = true
   deploy_on_create = true
 }
@@ -249,15 +249,15 @@ resource "dokploy_application" "resource_limited" {
   environment_id = dokploy_environment.production.id
   source_type    = "docker"
   docker_image   = "myapp:latest"
-  
+
   # Resource limits
   memory_limit       = 536870912   # 512MB
   memory_reservation = 268435456   # 256MB
   cpu_limit          = 1000000000  # 1 CPU core
   cpu_reservation    = 500000000   # 0.5 CPU core
-  
+
   replicas = 3
-  
+
   deploy_on_create = true
 }
 ```
@@ -271,14 +271,14 @@ resource "dokploy_application" "with_previews" {
   name           = "app-with-previews"
   environment_id = dokploy_environment.production.id
   source_type    = "github"
-  
+
   github_id         = "your-github-app-installation-id"
   github_owner      = "myorg"
   github_repository = "web"
   github_branch     = "main"
-  
+
   build_type = "nixpacks"
-  
+
   # Preview deployment settings
   preview_deployments_enabled = true
   preview_wildcard            = "*.preview.example.com"
@@ -286,12 +286,12 @@ resource "dokploy_application" "with_previews" {
   preview_https               = true
   preview_certificate_type    = "letsencrypt"
   preview_limit               = 5
-  
+
   preview_env = <<-EOT
     NODE_ENV=preview
     API_URL=https://api-preview.example.com
   EOT
-  
+
   auto_deploy      = true
   deploy_on_create = true
 }
@@ -304,18 +304,18 @@ resource "dokploy_application" "with_rollback" {
   name           = "rollback-app"
   environment_id = dokploy_environment.production.id
   source_type    = "github"
-  
+
   github_id         = "your-github-app-installation-id"
   github_owner      = "myorg"
   github_repository = "api"
   github_branch     = "main"
-  
+
   build_type = "dockerfile"
-  
+
   # Enable rollback
   rollback_active      = true
   rollback_registry_id = dokploy_registry.internal.id
-  
+
   deploy_on_create = true
 }
 ```
@@ -329,18 +329,18 @@ resource "dokploy_application" "remote_build" {
   name           = "remote-build-app"
   environment_id = dokploy_environment.production.id
   source_type    = "github"
-  
+
   github_id         = "your-github-app-installation-id"
   github_owner      = "myorg"
   github_repository = "heavy-build"
   github_branch     = "main"
-  
+
   build_type = "dockerfile"
-  
+
   # Remote build configuration
   build_server_id   = dokploy_server.build.id
   build_registry_id = dokploy_registry.internal.id
-  
+
   deploy_on_create = true
 }
 ```
@@ -355,9 +355,9 @@ resource "dokploy_application" "swarm_app" {
   environment_id = dokploy_environment.production.id
   source_type    = "docker"
   docker_image   = "nginx:alpine"
-  
+
   replicas = 3
-  
+
   # Health check configuration
   health_check_swarm = jsonencode({
     Test     = ["CMD", "curl", "-f", "http://localhost/health"]
@@ -365,7 +365,7 @@ resource "dokploy_application" "swarm_app" {
     Timeout  = 10000000000  # 10 seconds
     Retries  = 3
   })
-  
+
   # Restart policy
   restart_policy_swarm = jsonencode({
     Condition   = "on-failure"
@@ -373,7 +373,7 @@ resource "dokploy_application" "swarm_app" {
     Delay       = 5000000000  # 5 seconds
     Window      = 60000000000 # 60 seconds
   })
-  
+
   # Update configuration
   update_config_swarm = jsonencode({
     Parallelism   = 1
@@ -381,15 +381,15 @@ resource "dokploy_application" "swarm_app" {
     FailureAction = "rollback"
     Order         = "start-first"
   })
-  
+
   # Placement constraints
   placement_swarm = jsonencode({
     Constraints = ["node.role == worker"]
   })
-  
+
   # Stop grace period (30 seconds)
   stop_grace_period_swarm = 30000000000
-  
+
   deploy_on_create = true
 }
 ```
@@ -403,20 +403,20 @@ resource "dokploy_application" "monorepo_app" {
   name           = "monorepo-service"
   environment_id = dokploy_environment.production.id
   source_type    = "github"
-  
+
   github_id         = "your-github-app-installation-id"
   github_owner      = "myorg"
   github_repository = "monorepo"
   github_branch     = "main"
   github_build_path = "services/api"
-  
+
   # Only trigger deployment when these paths change
   watch_paths = [
     "services/api/**",
     "shared/lib/**",
     "package.json"
   ]
-  
+
   build_type       = "nixpacks"
   auto_deploy      = true
   deploy_on_create = true
@@ -432,7 +432,7 @@ resource "dokploy_application" "drop_app" {
   name           = "quick-deploy"
   environment_id = dokploy_environment.production.id
   source_type    = "drop"
-  
+
   # Raw Dockerfile content
   dockerfile = <<-DOCKERFILE
     FROM nginx:alpine
@@ -440,9 +440,9 @@ resource "dokploy_application" "drop_app" {
     EXPOSE 80
     CMD ["nginx", "-g", "daemon off;"]
   DOCKERFILE
-  
+
   drop_build_path = "/app"
-  
+
   deploy_on_create = true
 }
 ```

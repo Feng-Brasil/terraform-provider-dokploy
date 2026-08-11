@@ -14,7 +14,7 @@ Manages all environment variables for a Dokploy application as a single resource
 ```terraform
 resource "dokploy_environment_variables" "myapp_env" {
   application_id = dokploy_application.myapp.id
-  
+
   variables = {
     NODE_ENV     = "production"
     PORT         = "3000"

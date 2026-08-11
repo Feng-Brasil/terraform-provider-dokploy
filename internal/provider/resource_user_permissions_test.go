@@ -56,7 +56,7 @@ data "dokploy_user" "current" {}
 # The resource will be created but permissions will remain at their current values.
 resource "dokploy_user_permissions" "test" {
   member_id = data.dokploy_user.current.member_id
-  
+
   # These are left at defaults (false) which matches owner's actual permissions
   can_create_projects       = false
   can_create_services       = false
@@ -69,7 +69,7 @@ resource "dokploy_user_permissions" "test" {
   can_access_to_traefik_files = false
   can_create_environments   = false
   can_delete_environments   = false
-  
+
   accessed_projects     = []
   accessed_environments = []
   accessed_services     = []
