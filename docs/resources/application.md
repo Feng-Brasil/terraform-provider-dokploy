@@ -10,7 +10,7 @@ description: |-
 Manages a Dokploy application. Applications can be deployed from various sources including:
 - **Docker images** - Deploy pre-built container images
 - **GitHub** - Deploy from GitHub repositories using GitHub Apps
-- **GitLab** - Deploy from GitLab repositories  
+- **GitLab** - Deploy from GitLab repositories
 - **Bitbucket** - Deploy from Bitbucket repositories
 - **Gitea** - Deploy from self-hosted Gitea instances
 - **Custom Git** - Deploy from any Git repository via SSH or HTTPS
