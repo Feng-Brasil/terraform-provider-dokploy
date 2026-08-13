@@ -448,6 +448,7 @@ func (r *ComposeResource) Create(ctx context.Context, req resource.CreateRequest
 
 	comp := client.Compose{
 		Name:              plan.Name.ValueString(),
+		AppName:           plan.AppName.ValueString(),
 		EnvironmentID:     plan.EnvironmentID.ValueString(),
 		ComposeFile:       plan.ComposeFileContent.ValueString(),
 		Env:               plan.Env.ValueString(),
@@ -657,6 +658,7 @@ func (r *ComposeResource) Update(ctx context.Context, req resource.UpdateRequest
 	comp := client.Compose{
 		ID:                plan.ID.ValueString(),
 		Name:              plan.Name.ValueString(),
+		AppName:           plan.AppName.ValueString(),
 		EnvironmentID:     plan.EnvironmentID.ValueString(),
 		ComposeFile:       plan.ComposeFileContent.ValueString(),
 		Env:               effectiveEnv.ValueString(),

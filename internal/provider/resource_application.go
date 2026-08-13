@@ -729,7 +729,11 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 	}
 
 	plan.ID = types.StringValue(createdApp.ID)
-	if createdApp.AppName != "" {
+	// Preserve user-configured app_name in state when provided. Dokploy may
+	// append a random suffix to enforce uniqueness, and writing that mutated
+	// value back immediately can trigger "inconsistent result after apply".
+	// If app_name was omitted by the user, keep the API-generated value.
+	if createdApp.AppName != "" && (plan.AppName.IsNull() || plan.AppName.IsUnknown()) {
 		plan.AppName = types.StringValue(createdApp.AppName)
 	}
 
@@ -1055,7 +1059,10 @@ func (r *ApplicationResource) updateGeneralSettings(appID string, plan *Applicat
 	if !plan.Subtitle.IsNull() && !plan.Subtitle.IsUnknown() {
 		generalApp.Subtitle = plan.Subtitle.ValueString()
 	}
-	generalApp.Enabled = plan.Enabled.ValueBool()
+	if !plan.Enabled.IsNull() && !plan.Enabled.IsUnknown() {
+		generalApp.Enabled = plan.Enabled.ValueBool()
+		generalApp.EnabledSet = true
+	}
 
 	// Docker Swarm fields - parse JSON strings to maps
 	if !plan.HealthCheckSwarm.IsNull() && !plan.HealthCheckSwarm.IsUnknown() {
@@ -1260,7 +1267,9 @@ func (r *ApplicationResource) saveEnvironment(appID string, plan *ApplicationRes
 }
 
 func updatePlanFromApplication(plan *ApplicationResourceModel, app *client.Application) {
-	if app.AppName != "" {
+	// Keep explicit app_name from configuration stable. When app_name is
+	// omitted, this remains computed and we hydrate it from the API.
+	if app.AppName != "" && (plan.AppName.IsNull() || plan.AppName.IsUnknown()) {
 		plan.AppName = types.StringValue(app.AppName)
 	}
 	if app.SourceType != "" {
@@ -1289,7 +1298,7 @@ func updatePlanFromApplication(plan *ApplicationResourceModel, app *client.Appli
 		plan.BuildType = types.StringValue(app.BuildType)
 	}
 	if app.DockerfilePath != "" {
-		plan.DockerfilePath = types.StringValue(app.DockerfilePath)
+		plan.DockerfilePath = types.StringValue(normalizeDockerfilePath(app.DockerfilePath))
 	}
 	if app.DockerContextPath != "" {
 		plan.DockerContextPath = types.StringValue(app.DockerContextPath)
@@ -1428,7 +1437,9 @@ func updatePlanFromApplication(plan *ApplicationResourceModel, app *client.Appli
 
 	// Update all computed fields from API response
 	plan.CreateEnvFile = types.BoolValue(app.CreateEnvFile)
-	plan.Enabled = types.BoolValue(app.Enabled)
+	if plan.Enabled.IsNull() || plan.Enabled.IsUnknown() {
+		plan.Enabled = types.BoolValue(app.Enabled)
+	}
 	plan.HerokuVersion = types.StringValue(app.HerokuVersion)
 	plan.RailpackVersion = types.StringValue(app.RailpackVersion)
 	plan.IsStaticSpa = types.BoolValue(app.IsStaticSpa)
@@ -1540,7 +1551,10 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 	if app.EnvironmentID != "" {
 		state.EnvironmentID = types.StringValue(app.EnvironmentID)
 	}
-	if app.AppName != "" {
+	// Preserve user-configured app_name to avoid drift when Dokploy mutates it
+	// server-side (e.g. automatic uniqueness suffix). Still hydrate from API
+	// when app_name was not configured by the user.
+	if app.AppName != "" && (state.AppName.IsNull() || state.AppName.IsUnknown()) {
 		state.AppName = types.StringValue(app.AppName)
 	}
 	if app.Description != "" {
@@ -1692,7 +1706,7 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 		state.BuildType = types.StringValue(app.BuildType)
 	}
 	if app.DockerfilePath != "" {
-		state.DockerfilePath = types.StringValue(app.DockerfilePath)
+		state.DockerfilePath = types.StringValue(normalizeDockerfilePath(app.DockerfilePath))
 	}
 	if app.DockerContextPath != "" {
 		state.DockerContextPath = types.StringValue(app.DockerContextPath)
@@ -1792,7 +1806,9 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 	if app.Subtitle != "" {
 		state.Subtitle = types.StringValue(app.Subtitle)
 	}
-	state.Enabled = types.BoolValue(app.Enabled)
+	if state.Enabled.IsNull() || state.Enabled.IsUnknown() {
+		state.Enabled = types.BoolValue(app.Enabled)
+	}
 
 	// New fields: Build type
 	if app.Dockerfile != "" {
@@ -1871,4 +1887,13 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 			state.EndpointSpecSwarm = types.StringValue(string(jsonBytes))
 		}
 	}
+}
+
+func normalizeDockerfilePath(path string) string {
+	// Dokploy may return "Dockerfile" while this provider defaults to
+	// "./Dockerfile". Normalize both representations to avoid perpetual diffs.
+	if path == "Dockerfile" {
+		return "./Dockerfile"
+	}
+	return path
 }

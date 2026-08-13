@@ -877,6 +877,8 @@ type Application struct {
 	Title    string `json:"title"`
 	Subtitle string `json:"subtitle"`
 	Enabled  bool   `json:"enabled"`
+	// EnabledSet indicates whether enabled should be sent in update payloads.
+	EnabledSet bool `json:"-"`
 
 	// Application status
 	ApplicationStatus string `json:"applicationStatus"` // idle, running, done, error
@@ -970,6 +972,9 @@ func (c *DokployClient) UpdateApplicationGeneral(app Application) (*Application,
 
 	// Boolean fields - always include
 	payload["autoDeploy"] = app.AutoDeploy
+	if app.EnabledSet {
+		payload["enabled"] = app.Enabled
+	}
 
 	// Numeric fields
 	if app.Replicas > 0 {
