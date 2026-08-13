@@ -2418,23 +2418,34 @@ func (c *DokployClient) DeleteDatabaseWithType(id, dbType string) error {
 // --- Domain ---
 
 type Domain struct {
-	ID              string `json:"domainId"`
-	ApplicationID   string `json:"applicationId"`
-	ComposeID       string `json:"composeId"`
-	ServiceName     string `json:"serviceName"`
-	Host            string `json:"host"`
-	Path            string `json:"path"`
-	Port            int64  `json:"port"`
-	HTTPS           bool   `json:"https"`
-	CertificateType string `json:"certificateType"`
+	ID                  string   `json:"domainId"`
+	ApplicationID       string   `json:"applicationId"`
+	ComposeID           string   `json:"composeId"`
+	PreviewDeploymentID string   `json:"previewDeploymentId"`
+	ServiceName         string   `json:"serviceName"`
+	Host                string   `json:"host"`
+	Path                string   `json:"path"`
+	Port                int64    `json:"port"`
+	HTTPS               bool     `json:"https"`
+	CertificateType     string   `json:"certificateType"`
+	CustomEntrypoint    string   `json:"customEntrypoint"`
+	CustomCertResolver  string   `json:"customCertResolver"`
+	DomainType          string   `json:"domainType"`
+	InternalPath        string   `json:"internalPath"`
+	StripPath           bool     `json:"stripPath"`
+	Middlewares         []string `json:"middlewares"`
+	ForwardAuthEnabled  bool     `json:"forwardAuthEnabled"`
 }
 
 func (c *DokployClient) CreateDomain(domain Domain) (*Domain, error) {
 	payload := map[string]interface{}{
-		"host":  domain.Host,
-		"path":  domain.Path,
-		"port":  domain.Port,
-		"https": domain.HTTPS,
+		"host":               domain.Host,
+		"path":               domain.Path,
+		"port":               domain.Port,
+		"https":              domain.HTTPS,
+		"stripPath":          domain.StripPath,
+		"middlewares":        domain.Middlewares,
+		"forwardAuthEnabled": domain.ForwardAuthEnabled,
 	}
 	// Set certificate type based on HTTPS setting
 	if domain.HTTPS {
@@ -2452,8 +2463,23 @@ func (c *DokployClient) CreateDomain(domain Domain) (*Domain, error) {
 	if domain.ComposeID != "" {
 		payload["composeId"] = domain.ComposeID
 	}
+	if domain.PreviewDeploymentID != "" {
+		payload["previewDeploymentId"] = domain.PreviewDeploymentID
+	}
 	if domain.ServiceName != "" {
 		payload["serviceName"] = domain.ServiceName
+	}
+	if domain.CustomEntrypoint != "" {
+		payload["customEntrypoint"] = domain.CustomEntrypoint
+	}
+	if domain.CustomCertResolver != "" {
+		payload["customCertResolver"] = domain.CustomCertResolver
+	}
+	if domain.DomainType != "" {
+		payload["domainType"] = domain.DomainType
+	}
+	if domain.InternalPath != "" {
+		payload["internalPath"] = domain.InternalPath
 	}
 
 	resp, err := c.doRequest("POST", "domain.create", payload)
@@ -2491,6 +2517,20 @@ func (c *DokployClient) GetDomainsByCompose(composeID string) ([]Domain, error) 
 	return comp.Domains, nil
 }
 
+func (c *DokployClient) GetDomain(domainID string) (*Domain, error) {
+	endpoint := fmt.Sprintf("domain.one?domainId=%s", url.QueryEscape(domainID))
+	resp, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result Domain
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *DokployClient) DeleteDomain(id string) error {
 	payload := map[string]string{
 		"domainId": id,
@@ -2524,12 +2564,15 @@ func (c *DokployClient) GenerateDomain(appName string) (string, error) {
 
 func (c *DokployClient) UpdateDomain(domain Domain) (*Domain, error) {
 	payload := map[string]interface{}{
-		"domainId":    domain.ID,
-		"host":        domain.Host,
-		"path":        domain.Path,
-		"port":        domain.Port,
-		"https":       domain.HTTPS,
-		"serviceName": domain.ServiceName,
+		"domainId":           domain.ID,
+		"host":               domain.Host,
+		"path":               domain.Path,
+		"port":               domain.Port,
+		"https":              domain.HTTPS,
+		"serviceName":        domain.ServiceName,
+		"stripPath":          domain.StripPath,
+		"middlewares":        domain.Middlewares,
+		"forwardAuthEnabled": domain.ForwardAuthEnabled,
 	}
 	// Set certificate type based on HTTPS setting
 	if domain.HTTPS {
@@ -2540,6 +2583,18 @@ func (c *DokployClient) UpdateDomain(domain Domain) (*Domain, error) {
 		}
 	} else {
 		payload["certificateType"] = "none"
+	}
+	if domain.CustomEntrypoint != "" {
+		payload["customEntrypoint"] = domain.CustomEntrypoint
+	}
+	if domain.CustomCertResolver != "" {
+		payload["customCertResolver"] = domain.CustomCertResolver
+	}
+	if domain.DomainType != "" {
+		payload["domainType"] = domain.DomainType
+	}
+	if domain.InternalPath != "" {
+		payload["internalPath"] = domain.InternalPath
 	}
 	resp, err := c.doRequest("POST", "domain.update", payload)
 	if err != nil {

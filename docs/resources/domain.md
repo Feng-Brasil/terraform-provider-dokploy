@@ -29,15 +29,23 @@ resource "dokploy_domain" "myapp" {
 ### Optional
 
 - `application_id` (String)
-- `certificate_type` (String) Certificate type: 'none', 'letsencrypt'. Defaults to 'letsencrypt' when https is true.
+- `certificate_type` (String) Certificate type: 'none', 'letsencrypt', or 'custom'. Defaults to 'letsencrypt' when https is true.
 - `compose_id` (String)
+- `custom_cert_resolver` (String) Custom Traefik certificate resolver when certificate_type is 'custom'.
+- `custom_entrypoint` (String) Custom Traefik entrypoint for this domain.
+- `domain_type` (String) Domain type: application, compose, or preview.
+- `forward_auth_enabled` (Boolean) Whether forward authentication is enabled for the domain.
 - `generate_traefik_me` (Boolean) If true, generates a traefik.me domain for the application.
 - `host` (String)
 - `https` (Boolean) Enable HTTPS for the domain.
+- `internal_path` (String) Internal path prefix for routing.
+- `middlewares` (List of String) List of Traefik middleware names to apply.
 - `path` (String)
 - `port` (Number)
+- `preview_deployment_id` (String) Preview deployment ID for domains attached to preview deployments.
 - `redeploy_on_update` (Boolean) If true, triggers a redeploy of the associated application or compose stack when the domain is created or updated.
 - `service_name` (String)
+- `strip_path` (Boolean) Whether to strip the matched path prefix before forwarding.
 
 ### Read-Only
 
