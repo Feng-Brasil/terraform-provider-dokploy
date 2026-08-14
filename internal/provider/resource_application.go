@@ -781,16 +781,6 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 	// Update plan with values from the API
 	updatePlanFromApplication(&plan, finalApp)
 
-	// Read traefik config if it was set
-	if !plan.TraefikConfig.IsNull() && !plan.TraefikConfig.IsUnknown() {
-		traefikConfig, err := r.client.ReadTraefikConfig(createdApp.ID)
-		if err != nil {
-			resp.Diagnostics.AddWarning("Error reading Traefik config", err.Error())
-		} else if traefikConfig != "" {
-			plan.TraefikConfig = types.StringValue(traefikConfig)
-		}
-	}
-
 	// 8. Deploy if requested
 	if !plan.DeployOnCreate.IsNull() && plan.DeployOnCreate.ValueBool() {
 		err := r.client.DeployApplication(createdApp.ID, plan.ServerID.ValueString())
@@ -824,14 +814,14 @@ func (r *ApplicationResource) Read(ctx context.Context, req resource.ReadRequest
 	// Update state with values from API
 	readApplicationIntoState(&state, app)
 
-	// Read traefik config separately (not part of application response)
-	traefikConfig, err := r.client.ReadTraefikConfig(state.ID.ValueString())
-	if err != nil {
-		// Don't fail the read if traefik config can't be fetched
-		resp.Diagnostics.AddWarning("Error reading Traefik config", err.Error())
-	} else if traefikConfig != "" {
-		state.TraefikConfig = types.StringValue(traefikConfig)
-	} else {
+	// Do not hydrate traefik_config from API on read. Dokploy mutates this
+	// dynamically when domains are managed, which causes perpetual drift for
+	// users that did not explicitly set traefik_config in Terraform.
+	if state.TraefikConfig.IsUnknown() {
+		state.TraefikConfig = types.StringNull()
+	} else if !state.TraefikConfig.IsNull() && isLikelyGeneratedDokployTraefikConfig(state.TraefikConfig.ValueString()) {
+		// Migrate old provider state that was populated from the runtime-generated
+		// Traefik file instead of user-declared configuration.
 		state.TraefikConfig = types.StringNull()
 	}
 
@@ -895,12 +885,6 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 			resp.Diagnostics.AddError("Error updating Traefik config", err.Error())
 			return
 		}
-	} else if !state.TraefikConfig.IsNull() && (plan.TraefikConfig.IsNull() || plan.TraefikConfig.ValueString() == "") {
-		// Clear traefik config if it was set before but is now empty/null
-		if err := r.client.UpdateTraefikConfig(appID, ""); err != nil {
-			resp.Diagnostics.AddError("Error clearing Traefik config", err.Error())
-			return
-		}
 	}
 
 	// 6. Read back the final state
@@ -913,13 +897,7 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 	// Update plan with values from the API
 	updatePlanFromApplication(&plan, finalApp)
 
-	// Read traefik config separately (not part of application response)
-	traefikConfig, err := r.client.ReadTraefikConfig(appID)
-	if err != nil {
-		resp.Diagnostics.AddWarning("Error reading Traefik config", err.Error())
-	} else if traefikConfig != "" {
-		plan.TraefikConfig = types.StringValue(traefikConfig)
-	} else {
+	if plan.TraefikConfig.IsUnknown() {
 		plan.TraefikConfig = types.StringNull()
 	}
 
@@ -1896,4 +1874,13 @@ func normalizeDockerfilePath(path string) string {
 		return "./Dockerfile"
 	}
 	return path
+}
+
+func isLikelyGeneratedDokployTraefikConfig(config string) bool {
+	normalized := strings.ToLower(config)
+	return strings.Contains(normalized, "http:") &&
+		strings.Contains(normalized, "routers:") &&
+		strings.Contains(normalized, "services:") &&
+		strings.Contains(normalized, "redirect-to-https") &&
+		strings.Contains(normalized, "passhostheader: true")
 }
