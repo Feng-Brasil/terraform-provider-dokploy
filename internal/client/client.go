@@ -998,8 +998,43 @@ func (c *DokployClient) UpdateApplicationGeneral(app Application) (*Application,
 	if app.Command != "" {
 		payload["command"] = app.Command
 	}
+	if app.Args != "" {
+		payload["args"] = string(app.Args)
+	}
 	if app.EntryPoint != "" {
 		payload["entrypoint"] = app.EntryPoint
+	}
+
+	// Docker Swarm configuration
+	if app.HealthCheckSwarm != nil {
+		payload["healthCheckSwarm"] = app.HealthCheckSwarm
+	}
+	if app.RestartPolicySwarm != nil {
+		payload["restartPolicySwarm"] = app.RestartPolicySwarm
+	}
+	if app.PlacementSwarm != nil {
+		payload["placementSwarm"] = app.PlacementSwarm
+	}
+	if app.UpdateConfigSwarm != nil {
+		payload["updateConfigSwarm"] = app.UpdateConfigSwarm
+	}
+	if app.RollbackConfigSwarm != nil {
+		payload["rollbackConfigSwarm"] = app.RollbackConfigSwarm
+	}
+	if app.ModeSwarm != nil {
+		payload["modeSwarm"] = app.ModeSwarm
+	}
+	if app.LabelsSwarm != nil {
+		payload["labelsSwarm"] = app.LabelsSwarm
+	}
+	if app.NetworkSwarm != nil {
+		payload["networkSwarm"] = app.NetworkSwarm
+	}
+	if app.StopGracePeriodSwarm != nil {
+		payload["stopGracePeriodSwarm"] = *app.StopGracePeriodSwarm
+	}
+	if app.EndpointSpecSwarm != nil {
+		payload["endpointSpecSwarm"] = app.EndpointSpecSwarm
 	}
 
 	resp, err := c.doRequest("POST", "application.update", payload)
