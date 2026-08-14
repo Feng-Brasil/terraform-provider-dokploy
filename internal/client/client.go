@@ -1557,12 +1557,16 @@ func (c *DokployClient) CreateCompose(comp Compose) (*Compose, error) {
 	if composeType == "" {
 		composeType = "docker-compose"
 	}
+	appName := comp.AppName
+	if appName == "" {
+		appName = comp.Name
+	}
 
 	payload := map[string]interface{}{
 		"environmentId": comp.EnvironmentID,
 		"name":          comp.Name,
 		"composeType":   composeType,
-		"appName":       comp.Name,
+		"appName":       appName,
 	}
 
 	// Include serverId if provided
@@ -1607,6 +1611,7 @@ func (c *DokployClient) CreateCompose(comp Compose) (*Compose, error) {
 	updatePayload := map[string]interface{}{
 		"composeId":  createdComp.ID,
 		"name":       comp.Name,
+		"appName":    appName,
 		"sourceType": comp.SourceType,
 		"autoDeploy": comp.AutoDeploy,
 	}
@@ -1792,9 +1797,15 @@ func (c *DokployClient) GetCompose(id string) (*Compose, error) {
 }
 
 func (c *DokployClient) UpdateCompose(comp Compose) (*Compose, error) {
+	appName := comp.AppName
+	if appName == "" {
+		appName = comp.Name
+	}
+
 	payload := map[string]interface{}{
 		"composeId":  comp.ID,
 		"name":       comp.Name,
+		"appName":    appName,
 		"sourceType": comp.SourceType,
 		"autoDeploy": comp.AutoDeploy,
 	}
