@@ -2613,6 +2613,98 @@ func (c *DokployClient) GenerateDomain(appName string) (string, error) {
 	return strings.Trim(string(resp), "\""), nil
 }
 
+type DomainValidationResult struct {
+	IsValid    bool   `json:"isValid"`
+	ResolvedIP string `json:"resolvedIp"`
+	Error      string `json:"error"`
+}
+
+func (c *DokployClient) ValidateDomain(domain, serverIP string) (*DomainValidationResult, error) {
+	payload := map[string]interface{}{
+		"domain": domain,
+	}
+	if serverIP != "" {
+		payload["serverIp"] = serverIP
+	}
+
+	resp, err := c.doRequest("POST", "domain.validateDomain", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	trimmedResp := strings.TrimSpace(string(resp))
+	// Dokploy can return an empty object on success for this endpoint.
+	if trimmedResp == "" || trimmedResp == "{}" {
+		return &DomainValidationResult{IsValid: true}, nil
+	}
+
+	var typedResp DomainValidationResult
+	if err := json.Unmarshal(resp, &typedResp); err == nil {
+		if typedResp.IsValid || typedResp.Error != "" || typedResp.ResolvedIP != "" {
+			return &typedResp, nil
+		}
+	}
+
+	var rawResp interface{}
+	if err := json.Unmarshal(resp, &rawResp); err != nil {
+		return nil, fmt.Errorf("failed to parse domain.validateDomain response: %w", err)
+	}
+
+	if valid, ok := extractDomainValidationValue(rawResp); ok {
+		return &DomainValidationResult{IsValid: valid}, nil
+	}
+
+	// Fallback: if endpoint returned 2xx with an unknown shape, treat as valid.
+	return &DomainValidationResult{IsValid: true}, nil
+}
+
+func extractDomainValidationValue(raw interface{}) (bool, bool) {
+	switch v := raw.(type) {
+	case bool:
+		return v, true
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(v))
+		switch normalized {
+		case "true", "valid", "ok", "success", "available", "yes", "1":
+			return true, true
+		case "false", "invalid", "error", "unavailable", "no", "0":
+			return false, true
+		default:
+			return false, false
+		}
+	case float64:
+		if v == 1 {
+			return true, true
+		}
+		if v == 0 {
+			return false, true
+		}
+	case map[string]interface{}:
+		priorityKeys := []string{"valid", "isValid", "available", "success", "ok", "result"}
+		for _, key := range priorityKeys {
+			if rawValue, exists := v[key]; exists {
+				if parsedValue, ok := extractDomainValidationValue(rawValue); ok {
+					return parsedValue, true
+				}
+			}
+		}
+
+		for _, rawValue := range v {
+			if parsedValue, ok := extractDomainValidationValue(rawValue); ok {
+				return parsedValue, true
+			}
+		}
+	case []interface{}:
+		for _, item := range v {
+			if parsedValue, ok := extractDomainValidationValue(item); ok {
+				return parsedValue, true
+			}
+		}
+	}
+
+	return false, false
+}
+
 func (c *DokployClient) UpdateDomain(domain Domain) (*Domain, error) {
 	payload := map[string]interface{}{
 		"domainId":           domain.ID,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Feng-Brasil/terraform-provider-dokploy/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -18,6 +19,11 @@ import (
 
 var _ resource.Resource = &DomainResource{}
 var _ resource.ResourceWithImportState = &DomainResource{}
+
+const (
+	domainValidationTimeout       = 20 * time.Minute
+	domainValidationRetryInterval = 5 * time.Second
+)
 
 func NewDomainResource() resource.Resource {
 	return &DomainResource{}
@@ -223,6 +229,11 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 		}
 	}
 
+	if err := r.validateDomainBeforeMutation(ctx, plan); err != nil {
+		resp.Diagnostics.AddError("Error validating domain before creation", err.Error())
+		return
+	}
+
 	// Apply defaults
 	if plan.Path.IsUnknown() || plan.Path.IsNull() {
 		plan.Path = types.StringValue("/")
@@ -335,6 +346,16 @@ func (r *DomainResource) Update(ctx context.Context, req resource.UpdateRequest,
 	diags := req.Plan.Get(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if plan.Host.IsNull() || plan.Host.IsUnknown() {
+		resp.Diagnostics.AddError("Missing Host", "Host is required for domain update")
+		return
+	}
+
+	if err := r.validateDomainBeforeMutation(ctx, plan); err != nil {
+		resp.Diagnostics.AddError("Error validating domain before update", err.Error())
 		return
 	}
 
@@ -461,6 +482,93 @@ func (r *DomainResource) ImportState(ctx context.Context, req resource.ImportSta
 		)
 		return
 	}
+}
+
+func (r *DomainResource) validateDomainBeforeMutation(ctx context.Context, plan DomainResourceModel) error {
+	normalizedHost := strings.TrimSpace(plan.Host.ValueString())
+	if normalizedHost == "" {
+		return fmt.Errorf("host is required for domain validation")
+	}
+
+	serverIP, err := r.resolveServerIPForDomainValidation(plan)
+	if err != nil {
+		return err
+	}
+
+	validationCtx, cancel := context.WithTimeout(ctx, domainValidationTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(domainValidationRetryInterval)
+	defer ticker.Stop()
+
+	var lastErr error
+
+	for {
+		result, validateErr := r.client.ValidateDomain(normalizedHost, serverIP)
+		if validateErr == nil {
+			if result.IsValid {
+				return nil
+			}
+
+			invalidReason := fmt.Sprintf("domain %q is still invalid according to Dokploy validation", normalizedHost)
+			if result.Error != "" {
+				invalidReason = fmt.Sprintf("%s: %s", invalidReason, result.Error)
+			}
+			if serverIP != "" && result.ResolvedIP != "" {
+				invalidReason = fmt.Sprintf("%s (resolved_ip=%s expected_ip=%s)", invalidReason, result.ResolvedIP, serverIP)
+			}
+			lastErr = fmt.Errorf("%s", invalidReason)
+		} else {
+			lastErr = validateErr
+		}
+
+		select {
+		case <-validationCtx.Done():
+			if errors.Is(validationCtx.Err(), context.DeadlineExceeded) {
+				if lastErr != nil {
+					return fmt.Errorf("timed out after %s waiting for domain %q to become valid: %w", domainValidationTimeout, normalizedHost, lastErr)
+				}
+				return fmt.Errorf("timed out after %s waiting for domain %q to become valid", domainValidationTimeout, normalizedHost)
+			}
+			return fmt.Errorf("domain validation interrupted: %w", validationCtx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func (r *DomainResource) resolveServerIPForDomainValidation(plan DomainResourceModel) (string, error) {
+	if !plan.ApplicationID.IsNull() && !plan.ApplicationID.IsUnknown() && plan.ApplicationID.ValueString() != "" {
+		app, err := r.client.GetApplication(plan.ApplicationID.ValueString())
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve application server for domain validation: %w", err)
+		}
+		return r.resolveServerIPFromServerID(app.ServerID)
+	}
+
+	if !plan.ComposeID.IsNull() && !plan.ComposeID.IsUnknown() && plan.ComposeID.ValueString() != "" {
+		comp, err := r.client.GetCompose(plan.ComposeID.ValueString())
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve compose server for domain validation: %w", err)
+		}
+		return r.resolveServerIPFromServerID(comp.ServerID)
+	}
+
+	// preview_deployment_id domains may not expose a straightforward server lookup in the current client.
+	return "", nil
+}
+
+func (r *DomainResource) resolveServerIPFromServerID(serverID string) (string, error) {
+	normalizedServerID := strings.TrimSpace(serverID)
+	if normalizedServerID == "" {
+		return "", nil
+	}
+
+	server, err := r.client.GetServer(normalizedServerID)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch server %q for domain validation: %w", normalizedServerID, err)
+	}
+
+	return strings.TrimSpace(server.IPAddress), nil
 }
 
 func domainModelFromClient(ctx context.Context, model DomainResourceModel, d *client.Domain, diags *diag.Diagnostics) DomainResourceModel {
