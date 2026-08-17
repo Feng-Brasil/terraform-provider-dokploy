@@ -1,6 +1,6 @@
 provider_installation {
   dev_overrides {
-    "Feng-Brasil/dokploy" = "../"
+    "feng-brasil/dokploy" = "../"
   }
 
   # For all other providers, install them directly from their origin provider

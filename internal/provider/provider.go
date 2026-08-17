@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/Feng-Brasil/terraform-provider-dokploy/internal/client"
+	"github.com/feng-brasil/terraform-provider-dokploy/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
