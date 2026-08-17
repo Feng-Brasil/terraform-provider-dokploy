@@ -36,7 +36,7 @@ resource "dokploy_compose" "wordpress" {
   name           = "wordpress-stack"
   environment_id = dokploy_environment.production.id
   source_type    = "raw"
-  
+
   compose_file_content = <<-EOT
     version: '3.8'
     services:
@@ -51,7 +51,7 @@ resource "dokploy_compose" "wordpress" {
           WORDPRESS_DB_NAME: wordpress
         depends_on:
           - db
-          
+
       db:
         image: mysql:8.0
         environment:
@@ -61,11 +61,11 @@ resource "dokploy_compose" "wordpress" {
           MYSQL_ROOT_PASSWORD: root_password
         volumes:
           - db_data:/var/lib/mysql
-          
+
     volumes:
       db_data:
   EOT
-  
+
   deploy_on_create = true
 }
 ```
@@ -79,14 +79,14 @@ resource "dokploy_compose" "github_stack" {
   name           = "my-stack"
   environment_id = dokploy_environment.production.id
   source_type    = "github"
-  
+
   # GitHub settings
   github_id    = "your-github-app-installation-id"
   owner        = "myorg"
   repository   = "docker-stack"
   branch       = "main"
   compose_path = "./docker-compose.yml"
-  
+
   auto_deploy      = true
   deploy_on_create = true
 }
@@ -99,7 +99,7 @@ resource "dokploy_compose" "gitlab_stack" {
   name           = "gitlab-stack"
   environment_id = dokploy_environment.production.id
   source_type    = "gitlab"
-  
+
   # GitLab settings
   gitlab_id         = "your-gitlab-integration-id"
   gitlab_project_id = 12345
@@ -107,7 +107,7 @@ resource "dokploy_compose" "gitlab_stack" {
   gitlab_repository = "docker-stack"
   gitlab_branch     = "main"
   compose_path      = "./docker-compose.yml"
-  
+
   auto_deploy      = true
   deploy_on_create = true
 }
@@ -120,14 +120,14 @@ resource "dokploy_compose" "bitbucket_stack" {
   name           = "bitbucket-stack"
   environment_id = dokploy_environment.production.id
   source_type    = "bitbucket"
-  
+
   # Bitbucket settings
   bitbucket_id         = "your-bitbucket-integration-id"
   bitbucket_owner      = "myworkspace"
   bitbucket_repository = "docker-stack"
   bitbucket_branch     = "main"
   compose_path         = "./docker-compose.yml"
-  
+
   auto_deploy      = true
   deploy_on_create = true
 }
@@ -140,14 +140,14 @@ resource "dokploy_compose" "gitea_stack" {
   name           = "gitea-stack"
   environment_id = dokploy_environment.production.id
   source_type    = "gitea"
-  
+
   # Gitea settings
   gitea_id         = "your-gitea-integration-id"
   gitea_owner      = "myorg"
   gitea_repository = "docker-stack"
   gitea_branch     = "main"
   compose_path     = "./docker-compose.yml"
-  
+
   auto_deploy      = true
   deploy_on_create = true
 }
@@ -168,14 +168,14 @@ resource "dokploy_compose" "private_stack" {
   name           = "private-stack"
   environment_id = dokploy_environment.production.id
   source_type    = "git"
-  
+
   # Custom Git settings
   custom_git_url        = "git@github.com:myorg/private-stack.git"
   custom_git_branch     = "main"
   custom_git_ssh_key_id = dokploy_ssh_key.deploy_key.id
   compose_path          = "./docker-compose.yml"
   enable_submodules     = true
-  
+
   auto_deploy      = true
   deploy_on_create = true
 }
@@ -188,20 +188,20 @@ resource "dokploy_compose" "with_env" {
   name           = "env-stack"
   environment_id = dokploy_environment.production.id
   source_type    = "github"
-  
+
   github_id    = "your-github-app-installation-id"
   owner        = "myorg"
   repository   = "my-stack"
   branch       = "main"
   compose_path = "./docker-compose.yml"
-  
+
   # Environment variables available to compose file
   env = <<-EOT
     DATABASE_URL=postgresql://user:pass@db:5432/app
     REDIS_URL=redis://redis:6379
     SECRET_KEY=${var.secret_key}
   EOT
-  
+
   auto_deploy      = true
   deploy_on_create = true
 }
@@ -217,7 +217,7 @@ resource "dokploy_compose" "server_specific" {
   environment_id = dokploy_environment.production.id
   source_type    = "raw"
   server_id      = dokploy_server.worker.id
-  
+
   compose_file_content = <<-EOT
     version: '3.8'
     services:
@@ -226,7 +226,7 @@ resource "dokploy_compose" "server_specific" {
         deploy:
           replicas: 3
   EOT
-  
+
   deploy_on_create = true
 }
 ```

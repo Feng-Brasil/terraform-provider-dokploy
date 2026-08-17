@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ahmedali6/terraform-provider-dokploy/internal/client"
+	"github.com/feng-brasil/terraform-provider-dokploy/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -729,7 +729,11 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 	}
 
 	plan.ID = types.StringValue(createdApp.ID)
-	if createdApp.AppName != "" {
+	// Preserve user-configured app_name in state when provided. Dokploy may
+	// append a random suffix to enforce uniqueness, and writing that mutated
+	// value back immediately can trigger "inconsistent result after apply".
+	// If app_name was omitted by the user, keep the API-generated value.
+	if createdApp.AppName != "" && (plan.AppName.IsNull() || plan.AppName.IsUnknown()) {
 		plan.AppName = types.StringValue(createdApp.AppName)
 	}
 
@@ -777,16 +781,6 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 	// Update plan with values from the API
 	updatePlanFromApplication(&plan, finalApp)
 
-	// Read traefik config if it was set
-	if !plan.TraefikConfig.IsNull() && !plan.TraefikConfig.IsUnknown() {
-		traefikConfig, err := r.client.ReadTraefikConfig(createdApp.ID)
-		if err != nil {
-			resp.Diagnostics.AddWarning("Error reading Traefik config", err.Error())
-		} else if traefikConfig != "" {
-			plan.TraefikConfig = types.StringValue(traefikConfig)
-		}
-	}
-
 	// 8. Deploy if requested
 	if !plan.DeployOnCreate.IsNull() && plan.DeployOnCreate.ValueBool() {
 		err := r.client.DeployApplication(createdApp.ID, plan.ServerID.ValueString())
@@ -820,14 +814,14 @@ func (r *ApplicationResource) Read(ctx context.Context, req resource.ReadRequest
 	// Update state with values from API
 	readApplicationIntoState(&state, app)
 
-	// Read traefik config separately (not part of application response)
-	traefikConfig, err := r.client.ReadTraefikConfig(state.ID.ValueString())
-	if err != nil {
-		// Don't fail the read if traefik config can't be fetched
-		resp.Diagnostics.AddWarning("Error reading Traefik config", err.Error())
-	} else if traefikConfig != "" {
-		state.TraefikConfig = types.StringValue(traefikConfig)
-	} else {
+	// Do not hydrate traefik_config from API on read. Dokploy mutates this
+	// dynamically when domains are managed, which causes perpetual drift for
+	// users that did not explicitly set traefik_config in Terraform.
+	if state.TraefikConfig.IsUnknown() {
+		state.TraefikConfig = types.StringNull()
+	} else if !state.TraefikConfig.IsNull() && isLikelyGeneratedDokployTraefikConfig(state.TraefikConfig.ValueString()) {
+		// Migrate old provider state that was populated from the runtime-generated
+		// Traefik file instead of user-declared configuration.
 		state.TraefikConfig = types.StringNull()
 	}
 
@@ -891,12 +885,6 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 			resp.Diagnostics.AddError("Error updating Traefik config", err.Error())
 			return
 		}
-	} else if !state.TraefikConfig.IsNull() && (plan.TraefikConfig.IsNull() || plan.TraefikConfig.ValueString() == "") {
-		// Clear traefik config if it was set before but is now empty/null
-		if err := r.client.UpdateTraefikConfig(appID, ""); err != nil {
-			resp.Diagnostics.AddError("Error clearing Traefik config", err.Error())
-			return
-		}
 	}
 
 	// 6. Read back the final state
@@ -909,13 +897,7 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 	// Update plan with values from the API
 	updatePlanFromApplication(&plan, finalApp)
 
-	// Read traefik config separately (not part of application response)
-	traefikConfig, err := r.client.ReadTraefikConfig(appID)
-	if err != nil {
-		resp.Diagnostics.AddWarning("Error reading Traefik config", err.Error())
-	} else if traefikConfig != "" {
-		plan.TraefikConfig = types.StringValue(traefikConfig)
-	} else {
+	if plan.TraefikConfig.IsUnknown() {
 		plan.TraefikConfig = types.StringNull()
 	}
 
@@ -1055,7 +1037,10 @@ func (r *ApplicationResource) updateGeneralSettings(appID string, plan *Applicat
 	if !plan.Subtitle.IsNull() && !plan.Subtitle.IsUnknown() {
 		generalApp.Subtitle = plan.Subtitle.ValueString()
 	}
-	generalApp.Enabled = plan.Enabled.ValueBool()
+	if !plan.Enabled.IsNull() && !plan.Enabled.IsUnknown() {
+		generalApp.Enabled = plan.Enabled.ValueBool()
+		generalApp.EnabledSet = true
+	}
 
 	// Docker Swarm fields - parse JSON strings to maps
 	if !plan.HealthCheckSwarm.IsNull() && !plan.HealthCheckSwarm.IsUnknown() {
@@ -1260,7 +1245,9 @@ func (r *ApplicationResource) saveEnvironment(appID string, plan *ApplicationRes
 }
 
 func updatePlanFromApplication(plan *ApplicationResourceModel, app *client.Application) {
-	if app.AppName != "" {
+	// Keep explicit app_name from configuration stable. When app_name is
+	// omitted, this remains computed and we hydrate it from the API.
+	if app.AppName != "" && (plan.AppName.IsNull() || plan.AppName.IsUnknown()) {
 		plan.AppName = types.StringValue(app.AppName)
 	}
 	if app.SourceType != "" {
@@ -1289,7 +1276,7 @@ func updatePlanFromApplication(plan *ApplicationResourceModel, app *client.Appli
 		plan.BuildType = types.StringValue(app.BuildType)
 	}
 	if app.DockerfilePath != "" {
-		plan.DockerfilePath = types.StringValue(app.DockerfilePath)
+		plan.DockerfilePath = types.StringValue(normalizeDockerfilePath(app.DockerfilePath))
 	}
 	if app.DockerContextPath != "" {
 		plan.DockerContextPath = types.StringValue(app.DockerContextPath)
@@ -1428,7 +1415,9 @@ func updatePlanFromApplication(plan *ApplicationResourceModel, app *client.Appli
 
 	// Update all computed fields from API response
 	plan.CreateEnvFile = types.BoolValue(app.CreateEnvFile)
-	plan.Enabled = types.BoolValue(app.Enabled)
+	if plan.Enabled.IsNull() || plan.Enabled.IsUnknown() {
+		plan.Enabled = types.BoolValue(app.Enabled)
+	}
 	plan.HerokuVersion = types.StringValue(app.HerokuVersion)
 	plan.RailpackVersion = types.StringValue(app.RailpackVersion)
 	plan.IsStaticSpa = types.BoolValue(app.IsStaticSpa)
@@ -1540,7 +1529,10 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 	if app.EnvironmentID != "" {
 		state.EnvironmentID = types.StringValue(app.EnvironmentID)
 	}
-	if app.AppName != "" {
+	// Preserve user-configured app_name to avoid drift when Dokploy mutates it
+	// server-side (e.g. automatic uniqueness suffix). Still hydrate from API
+	// when app_name was not configured by the user.
+	if app.AppName != "" && (state.AppName.IsNull() || state.AppName.IsUnknown()) {
 		state.AppName = types.StringValue(app.AppName)
 	}
 	if app.Description != "" {
@@ -1692,7 +1684,7 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 		state.BuildType = types.StringValue(app.BuildType)
 	}
 	if app.DockerfilePath != "" {
-		state.DockerfilePath = types.StringValue(app.DockerfilePath)
+		state.DockerfilePath = types.StringValue(normalizeDockerfilePath(app.DockerfilePath))
 	}
 	if app.DockerContextPath != "" {
 		state.DockerContextPath = types.StringValue(app.DockerContextPath)
@@ -1792,7 +1784,9 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 	if app.Subtitle != "" {
 		state.Subtitle = types.StringValue(app.Subtitle)
 	}
-	state.Enabled = types.BoolValue(app.Enabled)
+	if state.Enabled.IsNull() || state.Enabled.IsUnknown() {
+		state.Enabled = types.BoolValue(app.Enabled)
+	}
 
 	// New fields: Build type
 	if app.Dockerfile != "" {
@@ -1871,4 +1865,22 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 			state.EndpointSpecSwarm = types.StringValue(string(jsonBytes))
 		}
 	}
+}
+
+func normalizeDockerfilePath(path string) string {
+	// Dokploy may return "Dockerfile" while this provider defaults to
+	// "./Dockerfile". Normalize both representations to avoid perpetual diffs.
+	if path == "Dockerfile" {
+		return "./Dockerfile"
+	}
+	return path
+}
+
+func isLikelyGeneratedDokployTraefikConfig(config string) bool {
+	normalized := strings.ToLower(config)
+	return strings.Contains(normalized, "http:") &&
+		strings.Contains(normalized, "routers:") &&
+		strings.Contains(normalized, "services:") &&
+		strings.Contains(normalized, "redirect-to-https") &&
+		strings.Contains(normalized, "passhostheader: true")
 }

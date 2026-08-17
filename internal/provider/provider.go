@@ -2,8 +2,9 @@ package provider
 
 import (
 	"context"
+	"os"
 
-	"github.com/ahmedali6/terraform-provider-dokploy/internal/client"
+	"github.com/feng-brasil/terraform-provider-dokploy/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -37,9 +38,9 @@ func (p *DokployProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				Description: "The URL of your Dokploy instance (e.g., https://dokploy.example.com/api)",
 			},
 			"api_key": schema.StringAttribute{
-				Required:    true,
+				Optional:    true,
 				Sensitive:   true,
-				Description: "Your Dokploy API Key",
+				Description: "Your Dokploy API Key. If omitted, the provider will use the DOKPLOY_API_KEY environment variable.",
 			},
 		},
 	}
@@ -67,12 +68,27 @@ func (p *DokployProvider) Configure(ctx context.Context, req provider.ConfigureR
 		)
 	}
 
-	if config.Host.IsNull() || config.ApiKey.IsNull() {
+	if config.Host.IsNull() {
+		return
+	}
+
+	apiKey := ""
+	if !config.ApiKey.IsNull() && !config.ApiKey.IsUnknown() {
+		apiKey = config.ApiKey.ValueString()
+	}
+	if apiKey == "" {
+		apiKey = os.Getenv("DOKPLOY_API_KEY")
+	}
+	if apiKey == "" {
+		resp.Diagnostics.AddError(
+			"Missing API Key Configuration",
+			"API key is required. Set `api_key` in the provider configuration or define the DOKPLOY_API_KEY environment variable.",
+		)
 		return
 	}
 
 	// Create client
-	c := client.NewDokployClient(config.Host.ValueString(), config.ApiKey.ValueString())
+	c := client.NewDokployClient(config.Host.ValueString(), apiKey)
 
 	// Make client available to resources
 	resp.ResourceData = c

@@ -53,13 +53,13 @@ resource "dokploy_redis" "cache" {
   app_name_prefix   = "prod-redis"
   database_password = var.redis_password
   environment_id    = dokploy_environment.production.id
-  
+
   # Resource limits
   memory_limit       = "512M"
   memory_reservation = "256M"
   cpu_limit          = "1000"
   cpu_reservation    = "500"
-  
+
   description = "Production Redis with resource limits"
 }
 ```
@@ -74,7 +74,7 @@ resource "dokploy_redis" "external" {
   database_password = var.redis_password
   environment_id    = dokploy_environment.production.id
   external_port     = 6379
-  
+
   description = "Redis accessible on port 6379"
 }
 ```

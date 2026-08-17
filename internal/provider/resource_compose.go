@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ahmedali6/terraform-provider-dokploy/internal/client"
+	"github.com/feng-brasil/terraform-provider-dokploy/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -448,6 +448,7 @@ func (r *ComposeResource) Create(ctx context.Context, req resource.CreateRequest
 
 	comp := client.Compose{
 		Name:              plan.Name.ValueString(),
+		AppName:           plan.AppName.ValueString(),
 		EnvironmentID:     plan.EnvironmentID.ValueString(),
 		ComposeFile:       plan.ComposeFileContent.ValueString(),
 		Env:               plan.Env.ValueString(),
@@ -657,6 +658,7 @@ func (r *ComposeResource) Update(ctx context.Context, req resource.UpdateRequest
 	comp := client.Compose{
 		ID:                plan.ID.ValueString(),
 		Name:              plan.Name.ValueString(),
+		AppName:           plan.AppName.ValueString(),
 		EnvironmentID:     plan.EnvironmentID.ValueString(),
 		ComposeFile:       plan.ComposeFileContent.ValueString(),
 		Env:               effectiveEnv.ValueString(),
@@ -803,7 +805,11 @@ func readComposeIntoState(ctx context.Context, state *ComposeResourceModel, comp
 		state.EnvironmentID = types.StringValue(comp.EnvironmentID)
 	}
 	if comp.AppName != "" {
-		state.AppName = types.StringValue(comp.AppName)
+		// Dokploy may append a runtime suffix to appName when isolated deployment is enabled.
+		// Preserve the configured base app_name to keep Terraform state stable.
+		if !shouldPreserveConfiguredComposeAppName(state, comp.AppName) {
+			state.AppName = types.StringValue(comp.AppName)
+		}
 	}
 	if comp.Description != "" {
 		state.Description = types.StringValue(comp.Description)
@@ -975,4 +981,23 @@ func readComposeIntoState(ctx context.Context, state *ComposeResourceModel, comp
 	} else if state.CreatedAt.IsUnknown() {
 		state.CreatedAt = types.StringNull()
 	}
+}
+
+func shouldPreserveConfiguredComposeAppName(state *ComposeResourceModel, apiAppName string) bool {
+	if state == nil || state.AppName.IsNull() || state.AppName.IsUnknown() {
+		return false
+	}
+
+	configuredAppName := strings.TrimSpace(state.AppName.ValueString())
+	if configuredAppName == "" {
+		return false
+	}
+
+	// Cloud may append an ephemeral suffix to app_name (e.g. "<base>-abc123").
+	// When that happens, preserve configured value in Terraform state.
+	if apiAppName == configuredAppName {
+		return false
+	}
+
+	return strings.HasPrefix(apiAppName, configuredAppName+"-")
 }

@@ -23,5 +23,8 @@ provider "dokploy" {
 
 ### Required
 
-- `api_key` (String, Sensitive) Your Dokploy API Key
 - `host` (String) The URL of your Dokploy instance (e.g., https://dokploy.example.com/api)
+
+### Optional
+
+- `api_key` (String, Sensitive) Your Dokploy API Key. If omitted, the provider will use the DOKPLOY_API_KEY environment variable.

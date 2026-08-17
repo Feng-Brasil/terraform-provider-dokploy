@@ -4,7 +4,7 @@ schema: 1.1
 partition: tf-ecosystem
 
 summary:
-  owner: ahmedali6
+  owner: feng-brasil
   description: |
     Terraform provider for managing Dokploy resources.
   visibility: public

@@ -877,6 +877,8 @@ type Application struct {
 	Title    string `json:"title"`
 	Subtitle string `json:"subtitle"`
 	Enabled  bool   `json:"enabled"`
+	// EnabledSet indicates whether enabled should be sent in update payloads.
+	EnabledSet bool `json:"-"`
 
 	// Application status
 	ApplicationStatus string `json:"applicationStatus"` // idle, running, done, error
@@ -970,6 +972,9 @@ func (c *DokployClient) UpdateApplicationGeneral(app Application) (*Application,
 
 	// Boolean fields - always include
 	payload["autoDeploy"] = app.AutoDeploy
+	if app.EnabledSet {
+		payload["enabled"] = app.Enabled
+	}
 
 	// Numeric fields
 	if app.Replicas > 0 {
@@ -993,8 +998,43 @@ func (c *DokployClient) UpdateApplicationGeneral(app Application) (*Application,
 	if app.Command != "" {
 		payload["command"] = app.Command
 	}
+	if app.Args != "" {
+		payload["args"] = string(app.Args)
+	}
 	if app.EntryPoint != "" {
 		payload["entrypoint"] = app.EntryPoint
+	}
+
+	// Docker Swarm configuration
+	if app.HealthCheckSwarm != nil {
+		payload["healthCheckSwarm"] = app.HealthCheckSwarm
+	}
+	if app.RestartPolicySwarm != nil {
+		payload["restartPolicySwarm"] = app.RestartPolicySwarm
+	}
+	if app.PlacementSwarm != nil {
+		payload["placementSwarm"] = app.PlacementSwarm
+	}
+	if app.UpdateConfigSwarm != nil {
+		payload["updateConfigSwarm"] = app.UpdateConfigSwarm
+	}
+	if app.RollbackConfigSwarm != nil {
+		payload["rollbackConfigSwarm"] = app.RollbackConfigSwarm
+	}
+	if app.ModeSwarm != nil {
+		payload["modeSwarm"] = app.ModeSwarm
+	}
+	if app.LabelsSwarm != nil {
+		payload["labelsSwarm"] = app.LabelsSwarm
+	}
+	if app.NetworkSwarm != nil {
+		payload["networkSwarm"] = app.NetworkSwarm
+	}
+	if app.StopGracePeriodSwarm != nil {
+		payload["stopGracePeriodSwarm"] = *app.StopGracePeriodSwarm
+	}
+	if app.EndpointSpecSwarm != nil {
+		payload["endpointSpecSwarm"] = app.EndpointSpecSwarm
 	}
 
 	resp, err := c.doRequest("POST", "application.update", payload)
@@ -1025,7 +1065,8 @@ func (c *DokployClient) DeleteApplication(id string) error {
 	payload := map[string]string{
 		"applicationId": id,
 	}
-	_, err := c.doRequest("POST", "application.remove", payload)
+	// Endpoint renomeado na API atual do Dokploy: application.remove -> application.delete
+	_, err := c.doRequest("POST", "application.delete", payload)
 	return err
 }
 
@@ -1191,32 +1232,42 @@ type SaveGitProviderInput struct {
 
 // SaveGitProvider configures the git provider settings for an application.
 // Corresponds to application.saveGitProvider endpoint.
+//
+// A API atual (OpenAPI) marca customGitBuildPath, customGitUrl, watchPaths e
+// customGitBranch como required (podendo ser null), portanto sao sempre
+// enviados no payload.
 func (c *DokployClient) SaveGitProvider(input SaveGitProviderInput) error {
 	payload := map[string]interface{}{
-		"applicationId": input.ApplicationID,
-	}
-
-	if input.CustomGitBranch != "" {
-		payload["customGitBranch"] = input.CustomGitBranch
-	}
-	if input.CustomGitBuildPath != "" {
-		payload["customGitBuildPath"] = input.CustomGitBuildPath
-	}
-	if input.CustomGitUrl != "" {
-		payload["customGitUrl"] = input.CustomGitUrl
-	}
-	if input.CustomGitSSHKeyId != "" {
-		payload["customGitSSHKeyId"] = input.CustomGitSSHKeyId
-	}
-	if input.EnableSubmodules {
-		payload["enableSubmodules"] = input.EnableSubmodules
-	}
-	if len(input.WatchPaths) > 0 {
-		payload["watchPaths"] = input.WatchPaths
+		"applicationId":      input.ApplicationID,
+		"customGitBranch":    input.CustomGitBranch,
+		"customGitBuildPath": nilIfEmpty(input.CustomGitBuildPath),
+		"customGitUrl":       nilIfEmpty(input.CustomGitUrl),
+		"customGitSSHKeyId":  nilIfEmpty(input.CustomGitSSHKeyId),
+		"enableSubmodules":   input.EnableSubmodules,
+		"watchPaths":         watchPathsOrNil(input.WatchPaths),
 	}
 
 	_, err := c.doRequest("POST", "application.saveGitProvider", payload)
 	return err
+}
+
+// nilIfEmpty devolve nil quando a string estiver vazia, permitindo enviar
+// null no payload JSON e manter compatibilidade com o schema Zod da API
+// (que exige o campo mas aceita null).
+func nilIfEmpty(v string) interface{} {
+	if v == "" {
+		return nil
+	}
+	return v
+}
+
+// watchPathsOrNil normaliza watchPaths: devolve nil quando vazio (a API
+// aceita null) e o proprio slice caso contrario.
+func watchPathsOrNil(paths []string) interface{} {
+	if len(paths) == 0 {
+		return nil
+	}
+	return paths
 }
 
 // SaveGithubProviderInput contains all the fields for the saveGithubProvider endpoint.
@@ -1234,45 +1285,34 @@ type SaveGithubProviderInput struct {
 
 // SaveGithubProvider configures the GitHub provider settings for an application.
 // Corresponds to application.saveGithubProvider endpoint.
+//
+// A API atual marca repository, owner, buildPath, githubId, branch e
+// triggerType como required. Enviamos todos, usando null onde nao houver
+// valor definido e default "push" para triggerType/"/" para buildPath.
 func (c *DokployClient) SaveGithubProvider(input SaveGithubProviderInput) error {
+	buildPath := input.BuildPath
+	if buildPath == "" {
+		buildPath = "/"
+	}
+	triggerType := input.TriggerType
+	if triggerType == "" {
+		triggerType = "push"
+	}
+	branch := input.Branch
+	if branch == "" {
+		branch = "main"
+	}
+
 	payload := map[string]interface{}{
 		"applicationId":    input.ApplicationID,
 		"enableSubmodules": input.EnableSubmodules,
-	}
-
-	// Required fields that can be null
-	if input.Owner != "" {
-		payload["owner"] = input.Owner
-	} else {
-		payload["owner"] = nil
-	}
-
-	if input.GithubId != "" {
-		payload["githubId"] = input.GithubId
-	} else {
-		payload["githubId"] = nil
-	}
-
-	// Optional fields
-	if input.Repository != "" {
-		payload["repository"] = input.Repository
-	}
-	if input.Branch != "" {
-		payload["branch"] = input.Branch
-	}
-	// buildPath is nonoptional in recent Dokploy Zod schemas, so always
-	// include it. Default to "/" when unset -- matches the UI's behaviour
-	// for an app without a custom build path.
-	if input.BuildPath != "" {
-		payload["buildPath"] = input.BuildPath
-	} else {
-		payload["buildPath"] = "/"
-	}
-	if len(input.WatchPaths) > 0 {
-		payload["watchPaths"] = input.WatchPaths
-	}
-	if input.TriggerType != "" {
-		payload["triggerType"] = input.TriggerType
+		"owner":            nilIfEmpty(input.Owner),
+		"githubId":         nilIfEmpty(input.GithubId),
+		"repository":       nilIfEmpty(input.Repository),
+		"branch":           branch,
+		"buildPath":        buildPath,
+		"triggerType":      triggerType,
+		"watchPaths":       watchPathsOrNil(input.WatchPaths),
 	}
 
 	_, err := c.doRequest("POST", "application.saveGithubProvider", payload)
@@ -1295,38 +1335,32 @@ type SaveGitlabProviderInput struct {
 
 // SaveGitlabProvider configures the GitLab provider settings for an application.
 // Corresponds to application.saveGitlabProvider endpoint.
+//
+// A API atual marca gitlabBuildPath, gitlabOwner, gitlabRepository, gitlabId,
+// gitlabProjectId, gitlabPathNamespace e gitlabBranch como required (aceitando
+// null). Enviamos todos os campos sempre.
 func (c *DokployClient) SaveGitlabProvider(input SaveGitlabProviderInput) error {
-	payload := map[string]interface{}{
-		"applicationId":    input.ApplicationID,
-		"enableSubmodules": input.EnableSubmodules,
+	branch := input.GitlabBranch
+	if branch == "" {
+		branch = "main"
 	}
 
-	if input.GitlabId != "" {
-		payload["gitlabId"] = input.GitlabId
-	} else {
-		payload["gitlabId"] = nil
-	}
-
+	var gitlabProjectId interface{}
 	if input.GitlabProjectId != 0 {
-		payload["gitlabProjectId"] = input.GitlabProjectId
+		gitlabProjectId = input.GitlabProjectId
 	}
-	if input.GitlabRepository != "" {
-		payload["gitlabRepository"] = input.GitlabRepository
-	}
-	if input.GitlabOwner != "" {
-		payload["gitlabOwner"] = input.GitlabOwner
-	}
-	if input.GitlabBranch != "" {
-		payload["gitlabBranch"] = input.GitlabBranch
-	}
-	if input.GitlabBuildPath != "" {
-		payload["gitlabBuildPath"] = input.GitlabBuildPath
-	}
-	if input.GitlabPathNamespace != "" {
-		payload["gitlabPathNamespace"] = input.GitlabPathNamespace
-	}
-	if len(input.WatchPaths) > 0 {
-		payload["watchPaths"] = input.WatchPaths
+
+	payload := map[string]interface{}{
+		"applicationId":       input.ApplicationID,
+		"enableSubmodules":    input.EnableSubmodules,
+		"gitlabId":            nilIfEmpty(input.GitlabId),
+		"gitlabProjectId":     gitlabProjectId,
+		"gitlabRepository":    nilIfEmpty(input.GitlabRepository),
+		"gitlabOwner":         nilIfEmpty(input.GitlabOwner),
+		"gitlabBranch":        branch,
+		"gitlabBuildPath":     nilIfEmpty(input.GitlabBuildPath),
+		"gitlabPathNamespace": nilIfEmpty(input.GitlabPathNamespace),
+		"watchPaths":          watchPathsOrNil(input.WatchPaths),
 	}
 
 	_, err := c.doRequest("POST", "application.saveGitlabProvider", payload)
@@ -1335,44 +1369,38 @@ func (c *DokployClient) SaveGitlabProvider(input SaveGitlabProviderInput) error 
 
 // SaveBitbucketProviderInput contains all the fields for the saveBitbucketProvider endpoint.
 type SaveBitbucketProviderInput struct {
-	ApplicationID       string
-	BitbucketId         string
-	BitbucketRepository string
-	BitbucketOwner      string
-	BitbucketBranch     string
-	BitbucketBuildPath  string
-	WatchPaths          []string
-	EnableSubmodules    bool
+	ApplicationID           string
+	BitbucketId             string
+	BitbucketRepository     string
+	BitbucketRepositorySlug string
+	BitbucketOwner          string
+	BitbucketBranch         string
+	BitbucketBuildPath      string
+	WatchPaths              []string
+	EnableSubmodules        bool
 }
 
 // SaveBitbucketProvider configures the Bitbucket provider settings for an application.
 // Corresponds to application.saveBitbucketProvider endpoint.
+//
+// A API atual marca bitbucketBuildPath, bitbucketOwner, bitbucketRepository,
+// bitbucketRepositorySlug, bitbucketId, applicationId e bitbucketBranch como
+// required (aceitando null). Enviamos todos.
 func (c *DokployClient) SaveBitbucketProvider(input SaveBitbucketProviderInput) error {
+	branch := input.BitbucketBranch
+	if branch == "" {
+		branch = "main"
+	}
 	payload := map[string]interface{}{
-		"applicationId":    input.ApplicationID,
-		"enableSubmodules": input.EnableSubmodules,
-	}
-
-	if input.BitbucketId != "" {
-		payload["bitbucketId"] = input.BitbucketId
-	} else {
-		payload["bitbucketId"] = nil
-	}
-
-	if input.BitbucketRepository != "" {
-		payload["bitbucketRepository"] = input.BitbucketRepository
-	}
-	if input.BitbucketOwner != "" {
-		payload["bitbucketOwner"] = input.BitbucketOwner
-	}
-	if input.BitbucketBranch != "" {
-		payload["bitbucketBranch"] = input.BitbucketBranch
-	}
-	if input.BitbucketBuildPath != "" {
-		payload["bitbucketBuildPath"] = input.BitbucketBuildPath
-	}
-	if len(input.WatchPaths) > 0 {
-		payload["watchPaths"] = input.WatchPaths
+		"applicationId":           input.ApplicationID,
+		"enableSubmodules":        input.EnableSubmodules,
+		"bitbucketId":             nilIfEmpty(input.BitbucketId),
+		"bitbucketRepository":     nilIfEmpty(input.BitbucketRepository),
+		"bitbucketRepositorySlug": nilIfEmpty(input.BitbucketRepositorySlug),
+		"bitbucketOwner":          nilIfEmpty(input.BitbucketOwner),
+		"bitbucketBranch":         branch,
+		"bitbucketBuildPath":      nilIfEmpty(input.BitbucketBuildPath),
+		"watchPaths":              watchPathsOrNil(input.WatchPaths),
 	}
 
 	_, err := c.doRequest("POST", "application.saveBitbucketProvider", payload)
@@ -1393,32 +1421,23 @@ type SaveGiteaProviderInput struct {
 
 // SaveGiteaProvider configures the Gitea provider settings for an application.
 // Corresponds to application.saveGiteaProvider endpoint.
+//
+// A API atual marca giteaBuildPath, giteaOwner, giteaRepository, giteaId e
+// giteaBranch como required (aceitando null). Enviamos todos.
 func (c *DokployClient) SaveGiteaProvider(input SaveGiteaProviderInput) error {
+	branch := input.GiteaBranch
+	if branch == "" {
+		branch = "main"
+	}
 	payload := map[string]interface{}{
 		"applicationId":    input.ApplicationID,
 		"enableSubmodules": input.EnableSubmodules,
-	}
-
-	if input.GiteaId != "" {
-		payload["giteaId"] = input.GiteaId
-	} else {
-		payload["giteaId"] = nil
-	}
-
-	if input.GiteaRepository != "" {
-		payload["giteaRepository"] = input.GiteaRepository
-	}
-	if input.GiteaOwner != "" {
-		payload["giteaOwner"] = input.GiteaOwner
-	}
-	if input.GiteaBranch != "" {
-		payload["giteaBranch"] = input.GiteaBranch
-	}
-	if input.GiteaBuildPath != "" {
-		payload["giteaBuildPath"] = input.GiteaBuildPath
-	}
-	if len(input.WatchPaths) > 0 {
-		payload["watchPaths"] = input.WatchPaths
+		"giteaId":          nilIfEmpty(input.GiteaId),
+		"giteaRepository":  nilIfEmpty(input.GiteaRepository),
+		"giteaOwner":       nilIfEmpty(input.GiteaOwner),
+		"giteaBranch":      branch,
+		"giteaBuildPath":   nilIfEmpty(input.GiteaBuildPath),
+		"watchPaths":       watchPathsOrNil(input.WatchPaths),
 	}
 
 	_, err := c.doRequest("POST", "application.saveGiteaProvider", payload)
@@ -1438,21 +1457,14 @@ type SaveDockerProviderInput struct {
 // SaveDockerProvider configures the docker provider settings for an application.
 // Corresponds to application.saveDockerProvider endpoint.
 func (c *DokployClient) SaveDockerProvider(input SaveDockerProviderInput) error {
+	// A API atual marca dockerImage, username, password e registryUrl como
+	// required (aceitando null). Enviamos todos sempre.
 	payload := map[string]interface{}{
 		"applicationId": input.ApplicationID,
-	}
-
-	if input.DockerImage != "" {
-		payload["dockerImage"] = input.DockerImage
-	}
-	if input.Username != "" {
-		payload["username"] = input.Username
-	}
-	if input.Password != "" {
-		payload["password"] = input.Password
-	}
-	if input.RegistryUrl != "" {
-		payload["registryUrl"] = input.RegistryUrl
+		"dockerImage":   nilIfEmpty(input.DockerImage),
+		"username":      nilIfEmpty(input.Username),
+		"password":      nilIfEmpty(input.Password),
+		"registryUrl":   nilIfEmpty(input.RegistryUrl),
 	}
 	if input.RegistryId != "" {
 		payload["registryId"] = input.RegistryId
@@ -1580,12 +1592,16 @@ func (c *DokployClient) CreateCompose(comp Compose) (*Compose, error) {
 	if composeType == "" {
 		composeType = "docker-compose"
 	}
+	appName := comp.AppName
+	if appName == "" {
+		appName = comp.Name
+	}
 
 	payload := map[string]interface{}{
 		"environmentId": comp.EnvironmentID,
 		"name":          comp.Name,
 		"composeType":   composeType,
-		"appName":       comp.Name,
+		"appName":       appName,
 	}
 
 	// Include serverId if provided
@@ -1630,6 +1646,7 @@ func (c *DokployClient) CreateCompose(comp Compose) (*Compose, error) {
 	updatePayload := map[string]interface{}{
 		"composeId":  createdComp.ID,
 		"name":       comp.Name,
+		"appName":    appName,
 		"sourceType": comp.SourceType,
 		"autoDeploy": comp.AutoDeploy,
 	}
@@ -1815,9 +1832,15 @@ func (c *DokployClient) GetCompose(id string) (*Compose, error) {
 }
 
 func (c *DokployClient) UpdateCompose(comp Compose) (*Compose, error) {
+	appName := comp.AppName
+	if appName == "" {
+		appName = comp.Name
+	}
+
 	payload := map[string]interface{}{
 		"composeId":  comp.ID,
 		"name":       comp.Name,
+		"appName":    appName,
 		"sourceType": comp.SourceType,
 		"autoDeploy": comp.AutoDeploy,
 	}
@@ -1962,8 +1985,11 @@ func (c *DokployClient) UpdateCompose(comp Compose) (*Compose, error) {
 }
 
 func (c *DokployClient) DeleteCompose(id string) error {
-	payload := map[string]string{
-		"composeId": id,
+	// A API atual exige deleteVolumes como campo obrigatorio no body.
+	// Mantemos false para nao remover volumes por padrao (comportamento nao destrutivo).
+	payload := map[string]interface{}{
+		"composeId":     id,
+		"deleteVolumes": false,
 	}
 	_, err := c.doRequest("POST", "compose.delete", payload)
 	return err
@@ -2443,23 +2469,34 @@ func (c *DokployClient) DeleteDatabaseWithType(id, dbType string) error {
 // --- Domain ---
 
 type Domain struct {
-	ID              string `json:"domainId"`
-	ApplicationID   string `json:"applicationId"`
-	ComposeID       string `json:"composeId"`
-	ServiceName     string `json:"serviceName"`
-	Host            string `json:"host"`
-	Path            string `json:"path"`
-	Port            int64  `json:"port"`
-	HTTPS           bool   `json:"https"`
-	CertificateType string `json:"certificateType"`
+	ID                  string   `json:"domainId"`
+	ApplicationID       string   `json:"applicationId"`
+	ComposeID           string   `json:"composeId"`
+	PreviewDeploymentID string   `json:"previewDeploymentId"`
+	ServiceName         string   `json:"serviceName"`
+	Host                string   `json:"host"`
+	Path                string   `json:"path"`
+	Port                int64    `json:"port"`
+	HTTPS               bool     `json:"https"`
+	CertificateType     string   `json:"certificateType"`
+	CustomEntrypoint    string   `json:"customEntrypoint"`
+	CustomCertResolver  string   `json:"customCertResolver"`
+	DomainType          string   `json:"domainType"`
+	InternalPath        string   `json:"internalPath"`
+	StripPath           bool     `json:"stripPath"`
+	Middlewares         []string `json:"middlewares"`
+	ForwardAuthEnabled  bool     `json:"forwardAuthEnabled"`
 }
 
 func (c *DokployClient) CreateDomain(domain Domain) (*Domain, error) {
 	payload := map[string]interface{}{
-		"host":  domain.Host,
-		"path":  domain.Path,
-		"port":  domain.Port,
-		"https": domain.HTTPS,
+		"host":               domain.Host,
+		"path":               domain.Path,
+		"port":               domain.Port,
+		"https":              domain.HTTPS,
+		"stripPath":          domain.StripPath,
+		"middlewares":        domain.Middlewares,
+		"forwardAuthEnabled": domain.ForwardAuthEnabled,
 	}
 	// Set certificate type based on HTTPS setting
 	if domain.HTTPS {
@@ -2477,8 +2514,23 @@ func (c *DokployClient) CreateDomain(domain Domain) (*Domain, error) {
 	if domain.ComposeID != "" {
 		payload["composeId"] = domain.ComposeID
 	}
+	if domain.PreviewDeploymentID != "" {
+		payload["previewDeploymentId"] = domain.PreviewDeploymentID
+	}
 	if domain.ServiceName != "" {
 		payload["serviceName"] = domain.ServiceName
+	}
+	if domain.CustomEntrypoint != "" {
+		payload["customEntrypoint"] = domain.CustomEntrypoint
+	}
+	if domain.CustomCertResolver != "" {
+		payload["customCertResolver"] = domain.CustomCertResolver
+	}
+	if domain.DomainType != "" {
+		payload["domainType"] = domain.DomainType
+	}
+	if domain.InternalPath != "" {
+		payload["internalPath"] = domain.InternalPath
 	}
 
 	resp, err := c.doRequest("POST", "domain.create", payload)
@@ -2516,11 +2568,26 @@ func (c *DokployClient) GetDomainsByCompose(composeID string) ([]Domain, error) 
 	return comp.Domains, nil
 }
 
+func (c *DokployClient) GetDomain(domainID string) (*Domain, error) {
+	endpoint := fmt.Sprintf("domain.one?domainId=%s", url.QueryEscape(domainID))
+	resp, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result Domain
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *DokployClient) DeleteDomain(id string) error {
 	payload := map[string]string{
 		"domainId": id,
 	}
-	_, err := c.doRequest("POST", "domain.remove", payload)
+	// Endpoint renomeado na API atual do Dokploy: domain.remove -> domain.delete
+	_, err := c.doRequest("POST", "domain.delete", payload)
 	return err
 }
 
@@ -2546,14 +2613,109 @@ func (c *DokployClient) GenerateDomain(appName string) (string, error) {
 	return strings.Trim(string(resp), "\""), nil
 }
 
+type DomainValidationResult struct {
+	IsValid    bool   `json:"isValid"`
+	ResolvedIP string `json:"resolvedIp"`
+	Error      string `json:"error"`
+}
+
+func (c *DokployClient) ValidateDomain(domain, serverIP string) (*DomainValidationResult, error) {
+	payload := map[string]interface{}{
+		"domain": domain,
+	}
+	if serverIP != "" {
+		payload["serverIp"] = serverIP
+	}
+
+	resp, err := c.doRequest("POST", "domain.validateDomain", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	trimmedResp := strings.TrimSpace(string(resp))
+	// Dokploy can return an empty object on success for this endpoint.
+	if trimmedResp == "" || trimmedResp == "{}" {
+		return &DomainValidationResult{IsValid: true}, nil
+	}
+
+	var typedResp DomainValidationResult
+	if err := json.Unmarshal(resp, &typedResp); err == nil {
+		if typedResp.IsValid || typedResp.Error != "" || typedResp.ResolvedIP != "" {
+			return &typedResp, nil
+		}
+	}
+
+	var rawResp interface{}
+	if err := json.Unmarshal(resp, &rawResp); err != nil {
+		return nil, fmt.Errorf("failed to parse domain.validateDomain response: %w", err)
+	}
+
+	if valid, ok := extractDomainValidationValue(rawResp); ok {
+		return &DomainValidationResult{IsValid: valid}, nil
+	}
+
+	// Fallback: if endpoint returned 2xx with an unknown shape, treat as valid.
+	return &DomainValidationResult{IsValid: true}, nil
+}
+
+func extractDomainValidationValue(raw interface{}) (bool, bool) {
+	switch v := raw.(type) {
+	case bool:
+		return v, true
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(v))
+		switch normalized {
+		case "true", "valid", "ok", "success", "available", "yes", "1":
+			return true, true
+		case "false", "invalid", "error", "unavailable", "no", "0":
+			return false, true
+		default:
+			return false, false
+		}
+	case float64:
+		if v == 1 {
+			return true, true
+		}
+		if v == 0 {
+			return false, true
+		}
+	case map[string]interface{}:
+		priorityKeys := []string{"valid", "isValid", "available", "success", "ok", "result"}
+		for _, key := range priorityKeys {
+			if rawValue, exists := v[key]; exists {
+				if parsedValue, ok := extractDomainValidationValue(rawValue); ok {
+					return parsedValue, true
+				}
+			}
+		}
+
+		for _, rawValue := range v {
+			if parsedValue, ok := extractDomainValidationValue(rawValue); ok {
+				return parsedValue, true
+			}
+		}
+	case []interface{}:
+		for _, item := range v {
+			if parsedValue, ok := extractDomainValidationValue(item); ok {
+				return parsedValue, true
+			}
+		}
+	}
+
+	return false, false
+}
+
 func (c *DokployClient) UpdateDomain(domain Domain) (*Domain, error) {
 	payload := map[string]interface{}{
-		"domainId":    domain.ID,
-		"host":        domain.Host,
-		"path":        domain.Path,
-		"port":        domain.Port,
-		"https":       domain.HTTPS,
-		"serviceName": domain.ServiceName,
+		"domainId":           domain.ID,
+		"host":               domain.Host,
+		"path":               domain.Path,
+		"port":               domain.Port,
+		"https":              domain.HTTPS,
+		"serviceName":        domain.ServiceName,
+		"stripPath":          domain.StripPath,
+		"middlewares":        domain.Middlewares,
+		"forwardAuthEnabled": domain.ForwardAuthEnabled,
 	}
 	// Set certificate type based on HTTPS setting
 	if domain.HTTPS {
@@ -2564,6 +2726,18 @@ func (c *DokployClient) UpdateDomain(domain Domain) (*Domain, error) {
 		}
 	} else {
 		payload["certificateType"] = "none"
+	}
+	if domain.CustomEntrypoint != "" {
+		payload["customEntrypoint"] = domain.CustomEntrypoint
+	}
+	if domain.CustomCertResolver != "" {
+		payload["customCertResolver"] = domain.CustomCertResolver
+	}
+	if domain.DomainType != "" {
+		payload["domainType"] = domain.DomainType
+	}
+	if domain.InternalPath != "" {
+		payload["internalPath"] = domain.InternalPath
 	}
 	resp, err := c.doRequest("POST", "domain.update", payload)
 	if err != nil {
