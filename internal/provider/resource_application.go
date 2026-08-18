@@ -1284,7 +1284,13 @@ func updatePlanFromApplication(plan *ApplicationResourceModel, app *client.Appli
 	// Update computed fields
 	plan.AutoDeploy = types.BoolValue(app.AutoDeploy)
 	plan.EnableSubmodules = types.BoolValue(app.EnableSubmodules)
-	plan.DetachDokployNetwork = types.BoolValue(app.DetachDokployNetwork)
+	// Some Dokploy responses may omit detachDokployNetwork, which decodes as
+	// false. Preserve plan value unless API explicitly returns true.
+	if app.DetachDokployNetwork {
+		plan.DetachDokployNetwork = types.BoolValue(true)
+	} else if plan.DetachDokployNetwork.IsNull() || plan.DetachDokployNetwork.IsUnknown() {
+		plan.DetachDokployNetwork = types.BoolValue(false)
+	}
 
 	if app.Replicas > 0 {
 		plan.Replicas = types.Int64Value(int64(app.Replicas))
@@ -1500,7 +1506,7 @@ func updatePlanFromApplication(plan *ApplicationResourceModel, app *client.Appli
 		if listVal, diag := types.ListValueFrom(context.Background(), types.StringType, app.NetworkIds); !diag.HasError() {
 			plan.NetworkIDs = listVal
 		}
-	} else if plan.NetworkIDs.IsUnknown() {
+	} else if plan.NetworkIDs.IsNull() || plan.NetworkIDs.IsUnknown() {
 		plan.NetworkIDs = types.ListNull(types.StringType)
 	}
 
@@ -1750,7 +1756,11 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 
 	// Runtime configuration
 	state.AutoDeploy = types.BoolValue(app.AutoDeploy)
-	state.DetachDokployNetwork = types.BoolValue(app.DetachDokployNetwork)
+	if app.DetachDokployNetwork {
+		state.DetachDokployNetwork = types.BoolValue(true)
+	} else if state.DetachDokployNetwork.IsNull() || state.DetachDokployNetwork.IsUnknown() {
+		state.DetachDokployNetwork = types.BoolValue(false)
+	}
 	if app.Replicas > 0 {
 		state.Replicas = types.Int64Value(int64(app.Replicas))
 	}
@@ -1784,7 +1794,7 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 		if listVal, diags := types.ListValueFrom(context.Background(), types.StringType, app.NetworkIds); !diags.HasError() {
 			state.NetworkIDs = listVal
 		}
-	} else {
+	} else if state.NetworkIDs.IsNull() || state.NetworkIDs.IsUnknown() {
 		state.NetworkIDs = types.ListNull(types.StringType)
 	}
 

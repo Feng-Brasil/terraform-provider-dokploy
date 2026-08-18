@@ -2510,49 +2510,7 @@ type Domain struct {
 }
 
 func (c *DokployClient) CreateDomain(domain Domain) (*Domain, error) {
-	payload := map[string]interface{}{
-		"host":               domain.Host,
-		"path":               domain.Path,
-		"port":               domain.Port,
-		"https":              domain.HTTPS,
-		"stripPath":          domain.StripPath,
-		"middlewares":        domain.Middlewares,
-		"forwardAuthEnabled": domain.ForwardAuthEnabled,
-	}
-	// Set certificate type based on HTTPS setting
-	if domain.HTTPS {
-		if domain.CertificateType != "" {
-			payload["certificateType"] = domain.CertificateType
-		} else {
-			payload["certificateType"] = "letsencrypt"
-		}
-	} else {
-		payload["certificateType"] = "none"
-	}
-	if domain.ApplicationID != "" {
-		payload["applicationId"] = domain.ApplicationID
-	}
-	if domain.ComposeID != "" {
-		payload["composeId"] = domain.ComposeID
-	}
-	if domain.PreviewDeploymentID != "" {
-		payload["previewDeploymentId"] = domain.PreviewDeploymentID
-	}
-	if domain.ServiceName != "" {
-		payload["serviceName"] = domain.ServiceName
-	}
-	if domain.CustomEntrypoint != "" {
-		payload["customEntrypoint"] = domain.CustomEntrypoint
-	}
-	if domain.CustomCertResolver != "" {
-		payload["customCertResolver"] = domain.CustomCertResolver
-	}
-	if domain.DomainType != "" {
-		payload["domainType"] = domain.DomainType
-	}
-	if domain.InternalPath != "" {
-		payload["internalPath"] = domain.InternalPath
-	}
+	payload := buildDomainPayload(domain, false)
 
 	resp, err := c.doRequest("POST", "domain.create", payload)
 	if err != nil {
@@ -2727,39 +2685,7 @@ func extractDomainValidationValue(raw interface{}) (bool, bool) {
 }
 
 func (c *DokployClient) UpdateDomain(domain Domain) (*Domain, error) {
-	payload := map[string]interface{}{
-		"domainId":           domain.ID,
-		"host":               domain.Host,
-		"path":               domain.Path,
-		"port":               domain.Port,
-		"https":              domain.HTTPS,
-		"serviceName":        domain.ServiceName,
-		"stripPath":          domain.StripPath,
-		"middlewares":        domain.Middlewares,
-		"forwardAuthEnabled": domain.ForwardAuthEnabled,
-	}
-	// Set certificate type based on HTTPS setting
-	if domain.HTTPS {
-		if domain.CertificateType != "" {
-			payload["certificateType"] = domain.CertificateType
-		} else {
-			payload["certificateType"] = "letsencrypt"
-		}
-	} else {
-		payload["certificateType"] = "none"
-	}
-	if domain.CustomEntrypoint != "" {
-		payload["customEntrypoint"] = domain.CustomEntrypoint
-	}
-	if domain.CustomCertResolver != "" {
-		payload["customCertResolver"] = domain.CustomCertResolver
-	}
-	if domain.DomainType != "" {
-		payload["domainType"] = domain.DomainType
-	}
-	if domain.InternalPath != "" {
-		payload["internalPath"] = domain.InternalPath
-	}
+	payload := buildDomainPayload(domain, true)
 	resp, err := c.doRequest("POST", "domain.update", payload)
 	if err != nil {
 		return nil, err
@@ -2777,6 +2703,76 @@ func (c *DokployClient) UpdateDomain(domain Domain) (*Domain, error) {
 		return nil, err
 	}
 	return &result, nil
+}
+
+func buildDomainPayload(domain Domain, includeDomainID bool) map[string]interface{} {
+	middlewares := domain.Middlewares
+	if middlewares == nil {
+		middlewares = []string{}
+	}
+
+	payload := map[string]interface{}{
+		"host":               domain.Host,
+		"path":               domain.Path,
+		"port":               domain.Port,
+		"https":              domain.HTTPS,
+		"stripPath":          domain.StripPath,
+		"middlewares":        middlewares,
+		"forwardAuthEnabled": domain.ForwardAuthEnabled,
+	}
+
+	if includeDomainID {
+		payload["domainId"] = domain.ID
+	}
+
+	if domain.ApplicationID != "" {
+		payload["applicationId"] = domain.ApplicationID
+	}
+	if domain.ComposeID != "" {
+		payload["composeId"] = domain.ComposeID
+	}
+	if domain.PreviewDeploymentID != "" {
+		payload["previewDeploymentId"] = domain.PreviewDeploymentID
+	}
+	if domain.DomainType != "" {
+		payload["domainType"] = domain.DomainType
+	}
+	if domain.InternalPath != "" {
+		payload["internalPath"] = domain.InternalPath
+	}
+
+	if domain.ServiceName != "" {
+		payload["serviceName"] = domain.ServiceName
+	} else {
+		payload["serviceName"] = nil
+	}
+
+	useCustomEntrypoint := domain.CustomEntrypoint != ""
+	payload["useCustomEntrypoint"] = useCustomEntrypoint
+	if useCustomEntrypoint {
+		payload["customEntrypoint"] = domain.CustomEntrypoint
+	} else {
+		payload["customEntrypoint"] = nil
+	}
+
+	if domain.CustomCertResolver != "" {
+		payload["customCertResolver"] = domain.CustomCertResolver
+	} else {
+		payload["customCertResolver"] = nil
+	}
+
+	// Set certificate type based on HTTPS setting.
+	if domain.HTTPS {
+		if domain.CertificateType != "" {
+			payload["certificateType"] = domain.CertificateType
+		} else {
+			payload["certificateType"] = "letsencrypt"
+		}
+	} else {
+		payload["certificateType"] = "none"
+	}
+
+	return payload
 }
 
 // --- Environment Variable ---

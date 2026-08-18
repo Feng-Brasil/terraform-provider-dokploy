@@ -996,12 +996,19 @@ func readComposeIntoState(ctx context.Context, state *ComposeResourceModel, comp
 	state.Randomize = types.BoolValue(comp.Randomize)
 	state.IsolatedDeployment = types.BoolValue(comp.IsolatedDeployment)
 	state.IsolatedDeploymentsVolume = types.BoolValue(comp.IsolatedDeploymentsVolume)
-	state.DetachDokployNetwork = types.BoolValue(comp.DetachDokployNetwork)
+	// Some Dokploy responses may omit detachDokployNetwork, which would decode as
+	// false and cause an inconsistent result after apply when the configured value
+	// is true. Preserve configured/state value unless API explicitly returns true.
+	if comp.DetachDokployNetwork {
+		state.DetachDokployNetwork = types.BoolValue(true)
+	} else if state.DetachDokployNetwork.IsNull() || state.DetachDokployNetwork.IsUnknown() {
+		state.DetachDokployNetwork = types.BoolValue(false)
+	}
 	if len(comp.NetworkIds) > 0 {
 		networkIDsList, d := types.ListValueFrom(ctx, types.StringType, comp.NetworkIds)
 		diags.Append(d...)
 		state.NetworkIDs = networkIDsList
-	} else {
+	} else if state.NetworkIDs.IsNull() || state.NetworkIDs.IsUnknown() {
 		state.NetworkIDs = types.ListNull(types.StringType)
 	}
 
