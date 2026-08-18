@@ -828,15 +828,19 @@ type Application struct {
 
 	// Runtime configuration (application.update)
 	// Note: The API accepts and returns memoryLimit/memoryReservation/cpuLimit/cpuReservation as strings
-	AutoDeploy        bool                `json:"autoDeploy"`
-	Replicas          int                 `json:"replicas"`
-	MemoryLimit       json.Number         `json:"memoryLimit"`
-	MemoryReservation json.Number         `json:"memoryReservation"`
-	CpuLimit          json.Number         `json:"cpuLimit"`
-	CpuReservation    json.Number         `json:"cpuReservation"`
-	Command           string              `json:"command"`
-	Args              StringOrStringSlice `json:"args"`
-	EntryPoint        string              `json:"entrypoint"`
+	AutoDeploy              bool                `json:"autoDeploy"`
+	Replicas                int                 `json:"replicas"`
+	MemoryLimit             json.Number         `json:"memoryLimit"`
+	MemoryReservation       json.Number         `json:"memoryReservation"`
+	CpuLimit                json.Number         `json:"cpuLimit"`
+	CpuReservation          json.Number         `json:"cpuReservation"`
+	Command                 string              `json:"command"`
+	Args                    StringOrStringSlice `json:"args"`
+	EntryPoint              string              `json:"entrypoint"`
+	NetworkIds              []string            `json:"networkIds"`
+	DetachDokployNetwork    bool                `json:"detachDokployNetwork"`
+	NetworkIdsSet           bool                `json:"-"`
+	DetachDokployNetworkSet bool                `json:"-"`
 
 	// Docker Swarm configuration
 	HealthCheckSwarm     map[string]interface{}   `json:"healthCheckSwarm"`
@@ -1003,6 +1007,12 @@ func (c *DokployClient) UpdateApplicationGeneral(app Application) (*Application,
 	}
 	if app.EntryPoint != "" {
 		payload["entrypoint"] = app.EntryPoint
+	}
+	if app.NetworkIdsSet {
+		payload["networkIds"] = app.NetworkIds
+	}
+	if app.DetachDokployNetworkSet {
+		payload["detachDokployNetwork"] = app.DetachDokployNetwork
 	}
 
 	// Docker Swarm configuration
@@ -1564,11 +1574,14 @@ type Compose struct {
 	Replicas   int  `json:"replicas"`
 
 	// Advanced configuration
-	Command                   string `json:"command"`
-	Suffix                    string `json:"suffix"`
-	Randomize                 bool   `json:"randomize"`
-	IsolatedDeployment        bool   `json:"isolatedDeployment"`
-	IsolatedDeploymentsVolume bool   `json:"isolatedDeploymentsVolume"`
+	Command                   string   `json:"command"`
+	Suffix                    string   `json:"suffix"`
+	Randomize                 bool     `json:"randomize"`
+	IsolatedDeployment        bool     `json:"isolatedDeployment"`
+	IsolatedDeploymentsVolume bool     `json:"isolatedDeploymentsVolume"`
+	NetworkIds                []string `json:"networkIds"`
+	DetachDokployNetwork      bool     `json:"detachDokployNetwork"`
+	NetworkIdsSet             bool     `json:"-"`
 
 	// Environment
 	Env string `json:"env"`
@@ -1769,9 +1782,13 @@ func (c *DokployClient) CreateCompose(comp Compose) (*Compose, error) {
 	updatePayload["randomize"] = comp.Randomize
 	updatePayload["isolatedDeployment"] = comp.IsolatedDeployment
 	updatePayload["isolatedDeploymentsVolume"] = comp.IsolatedDeploymentsVolume
+	updatePayload["detachDokployNetwork"] = comp.DetachDokployNetwork
 	// Send watchPaths if not nil (allows clearing by sending empty array)
 	if comp.WatchPaths != nil {
 		updatePayload["watchPaths"] = comp.WatchPaths
+	}
+	if comp.NetworkIdsSet {
+		updatePayload["networkIds"] = comp.NetworkIds
 	}
 
 	if comp.SourceType == "" {
@@ -1963,9 +1980,13 @@ func (c *DokployClient) UpdateCompose(comp Compose) (*Compose, error) {
 	payload["randomize"] = comp.Randomize
 	payload["isolatedDeployment"] = comp.IsolatedDeployment
 	payload["isolatedDeploymentsVolume"] = comp.IsolatedDeploymentsVolume
+	payload["detachDokployNetwork"] = comp.DetachDokployNetwork
 	// Send watchPaths if not nil (allows clearing by sending empty array)
 	if comp.WatchPaths != nil {
 		payload["watchPaths"] = comp.WatchPaths
+	}
+	if comp.NetworkIdsSet {
+		payload["networkIds"] = comp.NetworkIds
 	}
 
 	if comp.EnvironmentID != "" {
@@ -2489,49 +2510,7 @@ type Domain struct {
 }
 
 func (c *DokployClient) CreateDomain(domain Domain) (*Domain, error) {
-	payload := map[string]interface{}{
-		"host":               domain.Host,
-		"path":               domain.Path,
-		"port":               domain.Port,
-		"https":              domain.HTTPS,
-		"stripPath":          domain.StripPath,
-		"middlewares":        domain.Middlewares,
-		"forwardAuthEnabled": domain.ForwardAuthEnabled,
-	}
-	// Set certificate type based on HTTPS setting
-	if domain.HTTPS {
-		if domain.CertificateType != "" {
-			payload["certificateType"] = domain.CertificateType
-		} else {
-			payload["certificateType"] = "letsencrypt"
-		}
-	} else {
-		payload["certificateType"] = "none"
-	}
-	if domain.ApplicationID != "" {
-		payload["applicationId"] = domain.ApplicationID
-	}
-	if domain.ComposeID != "" {
-		payload["composeId"] = domain.ComposeID
-	}
-	if domain.PreviewDeploymentID != "" {
-		payload["previewDeploymentId"] = domain.PreviewDeploymentID
-	}
-	if domain.ServiceName != "" {
-		payload["serviceName"] = domain.ServiceName
-	}
-	if domain.CustomEntrypoint != "" {
-		payload["customEntrypoint"] = domain.CustomEntrypoint
-	}
-	if domain.CustomCertResolver != "" {
-		payload["customCertResolver"] = domain.CustomCertResolver
-	}
-	if domain.DomainType != "" {
-		payload["domainType"] = domain.DomainType
-	}
-	if domain.InternalPath != "" {
-		payload["internalPath"] = domain.InternalPath
-	}
+	payload := buildDomainPayload(domain, false)
 
 	resp, err := c.doRequest("POST", "domain.create", payload)
 	if err != nil {
@@ -2706,39 +2685,7 @@ func extractDomainValidationValue(raw interface{}) (bool, bool) {
 }
 
 func (c *DokployClient) UpdateDomain(domain Domain) (*Domain, error) {
-	payload := map[string]interface{}{
-		"domainId":           domain.ID,
-		"host":               domain.Host,
-		"path":               domain.Path,
-		"port":               domain.Port,
-		"https":              domain.HTTPS,
-		"serviceName":        domain.ServiceName,
-		"stripPath":          domain.StripPath,
-		"middlewares":        domain.Middlewares,
-		"forwardAuthEnabled": domain.ForwardAuthEnabled,
-	}
-	// Set certificate type based on HTTPS setting
-	if domain.HTTPS {
-		if domain.CertificateType != "" {
-			payload["certificateType"] = domain.CertificateType
-		} else {
-			payload["certificateType"] = "letsencrypt"
-		}
-	} else {
-		payload["certificateType"] = "none"
-	}
-	if domain.CustomEntrypoint != "" {
-		payload["customEntrypoint"] = domain.CustomEntrypoint
-	}
-	if domain.CustomCertResolver != "" {
-		payload["customCertResolver"] = domain.CustomCertResolver
-	}
-	if domain.DomainType != "" {
-		payload["domainType"] = domain.DomainType
-	}
-	if domain.InternalPath != "" {
-		payload["internalPath"] = domain.InternalPath
-	}
+	payload := buildDomainPayload(domain, true)
 	resp, err := c.doRequest("POST", "domain.update", payload)
 	if err != nil {
 		return nil, err
@@ -2756,6 +2703,76 @@ func (c *DokployClient) UpdateDomain(domain Domain) (*Domain, error) {
 		return nil, err
 	}
 	return &result, nil
+}
+
+func buildDomainPayload(domain Domain, includeDomainID bool) map[string]interface{} {
+	middlewares := domain.Middlewares
+	if middlewares == nil {
+		middlewares = []string{}
+	}
+
+	payload := map[string]interface{}{
+		"host":               domain.Host,
+		"path":               domain.Path,
+		"port":               domain.Port,
+		"https":              domain.HTTPS,
+		"stripPath":          domain.StripPath,
+		"middlewares":        middlewares,
+		"forwardAuthEnabled": domain.ForwardAuthEnabled,
+	}
+
+	if includeDomainID {
+		payload["domainId"] = domain.ID
+	}
+
+	if domain.ApplicationID != "" {
+		payload["applicationId"] = domain.ApplicationID
+	}
+	if domain.ComposeID != "" {
+		payload["composeId"] = domain.ComposeID
+	}
+	if domain.PreviewDeploymentID != "" {
+		payload["previewDeploymentId"] = domain.PreviewDeploymentID
+	}
+	if domain.DomainType != "" {
+		payload["domainType"] = domain.DomainType
+	}
+	if domain.InternalPath != "" {
+		payload["internalPath"] = domain.InternalPath
+	}
+
+	if domain.ServiceName != "" {
+		payload["serviceName"] = domain.ServiceName
+	} else {
+		payload["serviceName"] = nil
+	}
+
+	useCustomEntrypoint := domain.CustomEntrypoint != ""
+	payload["useCustomEntrypoint"] = useCustomEntrypoint
+	if useCustomEntrypoint {
+		payload["customEntrypoint"] = domain.CustomEntrypoint
+	} else {
+		payload["customEntrypoint"] = nil
+	}
+
+	if domain.CustomCertResolver != "" {
+		payload["customCertResolver"] = domain.CustomCertResolver
+	} else {
+		payload["customCertResolver"] = nil
+	}
+
+	// Set certificate type based on HTTPS setting.
+	if domain.HTTPS {
+		if domain.CertificateType != "" {
+			payload["certificateType"] = domain.CertificateType
+		} else {
+			payload["certificateType"] = "letsencrypt"
+		}
+	} else {
+		payload["certificateType"] = "none"
+	}
+
+	return payload
 }
 
 // --- Environment Variable ---
@@ -3704,6 +3721,112 @@ func (c *DokployClient) ListRegistries() ([]Registry, error) {
 		return nil, err
 	}
 	return registries, nil
+}
+
+// NetworkIPAMConfig represents one IPAM config entry for a Docker network.
+type NetworkIPAMConfig struct {
+	Subnet  string `json:"subnet,omitempty"`
+	Gateway string `json:"gateway,omitempty"`
+	IPRange string `json:"ipRange,omitempty"`
+}
+
+// NetworkIPAM represents IPAM settings for a Docker network.
+type NetworkIPAM struct {
+	Driver string              `json:"driver,omitempty"`
+	Config []NetworkIPAMConfig `json:"config,omitempty"`
+}
+
+// Network represents a Dokploy managed Docker network.
+type Network struct {
+	NetworkID      string       `json:"networkId"`
+	Name           string       `json:"name"`
+	Driver         string       `json:"driver"`
+	Internal       bool         `json:"internal"`
+	Attachable     bool         `json:"attachable"`
+	EnableIPv4     bool         `json:"enableIPv4"`
+	EnableIPv6     bool         `json:"enableIPv6"`
+	MTU            *int64       `json:"mtu,omitempty"`
+	IPAM           *NetworkIPAM `json:"ipam,omitempty"`
+	OrganizationID string       `json:"organizationId"`
+	ServerID       *string      `json:"serverId,omitempty"`
+	CreatedAt      string       `json:"createdAt"`
+}
+
+func (c *DokployClient) CreateNetwork(network Network) (*Network, error) {
+	payload := map[string]interface{}{
+		"name":       network.Name,
+		"internal":   network.Internal,
+		"attachable": network.Attachable,
+		"enableIPv4": network.EnableIPv4,
+		"enableIPv6": network.EnableIPv6,
+	}
+
+	if network.Driver != "" {
+		payload["driver"] = network.Driver
+	}
+	if network.MTU != nil {
+		payload["mtu"] = *network.MTU
+	}
+	if network.IPAM != nil {
+		payload["ipam"] = network.IPAM
+	}
+	if network.ServerID != nil {
+		payload["serverId"] = *network.ServerID
+	}
+
+	resp, err := c.doRequest("POST", "network.create", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	var result Network
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+func (c *DokployClient) GetNetwork(id string) (*Network, error) {
+	endpoint := fmt.Sprintf("network.one?networkId=%s", url.QueryEscape(id))
+	resp, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result Network
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+func (c *DokployClient) DeleteNetwork(id string) error {
+	payload := map[string]string{
+		"networkId": id,
+	}
+	_, err := c.doRequest("POST", "network.remove", payload)
+	return err
+}
+
+func (c *DokployClient) ListNetworks(serverID string) ([]Network, error) {
+	endpoint := "network.all"
+	if serverID != "" {
+		endpoint = fmt.Sprintf("network.all?serverId=%s", url.QueryEscape(serverID))
+	}
+
+	resp, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []Network
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // Destination represents a backup destination (S3, MinIO, etc.)

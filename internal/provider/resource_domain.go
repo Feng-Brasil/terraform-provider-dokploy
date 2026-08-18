@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/feng-brasil/terraform-provider-dokploy/internal/client"
@@ -23,7 +24,10 @@ var _ resource.ResourceWithImportState = &DomainResource{}
 const (
 	domainValidationTimeout       = 20 * time.Minute
 	domainValidationRetryInterval = 5 * time.Second
+	domainReconcileRetryDelay     = 2 * time.Second
 )
+
+var domainMutationLocks sync.Map
 
 func NewDomainResource() resource.Resource {
 	return &DomainResource{}
@@ -185,6 +189,9 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
+	unlock := lockDomainMutationScope(domainMutationScopeFromModel(plan))
+	defer unlock()
+
 	if plan.ApplicationID.IsNull() && plan.ComposeID.IsNull() && plan.PreviewDeploymentID.IsNull() {
 		resp.Diagnostics.AddError("Missing Association", "One of application_id, compose_id, or preview_deployment_id must be provided")
 		return
@@ -234,22 +241,7 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	// Apply defaults
-	if plan.Path.IsUnknown() || plan.Path.IsNull() {
-		plan.Path = types.StringValue("/")
-	}
-	if plan.Port.IsUnknown() || plan.Port.IsNull() {
-		plan.Port = types.Int64Value(3000)
-	}
-	if plan.HTTPS.IsUnknown() || plan.HTTPS.IsNull() {
-		plan.HTTPS = types.BoolValue(true)
-	}
-	if plan.StripPath.IsUnknown() || plan.StripPath.IsNull() {
-		plan.StripPath = types.BoolValue(false)
-	}
-	if plan.ForwardAuthEnabled.IsUnknown() || plan.ForwardAuthEnabled.IsNull() {
-		plan.ForwardAuthEnabled = types.BoolValue(false)
-	}
+	applyDomainPlanDefaults(&plan)
 
 	var middlewares []string
 	if !plan.Middlewares.IsNull() && !plan.Middlewares.IsUnknown() {
@@ -288,6 +280,27 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 	if createdDomain.ID == "" {
 		resp.Diagnostics.AddError("Error creating domain", "API response did not include domainId")
 		return
+	}
+
+	// Dokploy UI performs an update call after editing a domain. Replaying an
+	// equivalent update right after create helps stabilize routing state,
+	// especially when multiple rules are created for the same host.
+	domain.ID = createdDomain.ID
+	if _, err := r.client.UpdateDomain(domain); err != nil {
+		resp.Diagnostics.AddWarning(
+			"Domain Reconciliation Update Failed",
+			fmt.Sprintf("Domain was created, but post-create reconciliation update failed: %s", err.Error()),
+		)
+	} else if shouldRunSecondaryReconcile(domain) {
+		// Path-prefixed routes with strip_path can intermittently miss the
+		// generated stripPrefix middleware on the first reconciliation pass.
+		time.Sleep(domainReconcileRetryDelay)
+		if _, err := r.client.UpdateDomain(domain); err != nil {
+			resp.Diagnostics.AddWarning(
+				"Domain Secondary Reconciliation Update Failed",
+				fmt.Sprintf("Domain was created, but secondary post-create reconciliation update failed: %s", err.Error()),
+			)
+		}
 	}
 
 	plan.ID = types.StringValue(createdDomain.ID)
@@ -349,6 +362,9 @@ func (r *DomainResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
+	unlock := lockDomainMutationScope(domainMutationScopeFromModel(plan))
+	defer unlock()
+
 	if plan.Host.IsNull() || plan.Host.IsUnknown() {
 		resp.Diagnostics.AddError("Missing Host", "Host is required for domain update")
 		return
@@ -358,6 +374,8 @@ func (r *DomainResource) Update(ctx context.Context, req resource.UpdateRequest,
 		resp.Diagnostics.AddError("Error validating domain before update", err.Error())
 		return
 	}
+
+	applyDomainPlanDefaults(&plan)
 
 	var middlewares []string
 	if !plan.Middlewares.IsNull() && !plan.Middlewares.IsUnknown() {
@@ -429,6 +447,9 @@ func (r *DomainResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	unlock := lockDomainMutationScope(domainMutationScopeFromModel(state))
+	defer unlock()
 
 	err := r.client.DeleteDomain(state.ID.ValueString())
 	if err != nil {
@@ -634,4 +655,81 @@ func domainModelFromClient(ctx context.Context, model DomainResourceModel, d *cl
 	}
 
 	return model
+}
+
+func applyDomainPlanDefaults(plan *DomainResourceModel) {
+	if plan.Path.IsUnknown() || plan.Path.IsNull() {
+		plan.Path = types.StringValue("/")
+	}
+	if plan.Port.IsUnknown() || plan.Port.IsNull() {
+		plan.Port = types.Int64Value(3000)
+	}
+	if plan.HTTPS.IsUnknown() || plan.HTTPS.IsNull() {
+		plan.HTTPS = types.BoolValue(true)
+	}
+	if plan.StripPath.IsUnknown() || plan.StripPath.IsNull() {
+		plan.StripPath = types.BoolValue(false)
+	}
+	if plan.ForwardAuthEnabled.IsUnknown() || plan.ForwardAuthEnabled.IsNull() {
+		plan.ForwardAuthEnabled = types.BoolValue(false)
+	}
+
+	if plan.InternalPath.IsUnknown() || plan.InternalPath.IsNull() {
+		plan.InternalPath = types.StringValue("/")
+	}
+
+	if plan.DomainType.IsUnknown() || plan.DomainType.IsNull() || strings.TrimSpace(plan.DomainType.ValueString()) == "" {
+		switch {
+		case !plan.ApplicationID.IsNull() && !plan.ApplicationID.IsUnknown() && plan.ApplicationID.ValueString() != "":
+			plan.DomainType = types.StringValue("application")
+		case !plan.ComposeID.IsNull() && !plan.ComposeID.IsUnknown() && plan.ComposeID.ValueString() != "":
+			plan.DomainType = types.StringValue("compose")
+		case !plan.PreviewDeploymentID.IsNull() && !plan.PreviewDeploymentID.IsUnknown() && plan.PreviewDeploymentID.ValueString() != "":
+			plan.DomainType = types.StringValue("preview")
+		}
+	}
+}
+
+func shouldRunSecondaryReconcile(domain client.Domain) bool {
+	normalizedPath := strings.TrimSpace(domain.Path)
+	return domain.StripPath || (normalizedPath != "" && normalizedPath != "/")
+}
+
+func domainMutationScopeFromModel(model DomainResourceModel) string {
+	if !model.ApplicationID.IsNull() && !model.ApplicationID.IsUnknown() {
+		if appID := strings.TrimSpace(model.ApplicationID.ValueString()); appID != "" {
+			return "application:" + appID
+		}
+	}
+	if !model.ComposeID.IsNull() && !model.ComposeID.IsUnknown() {
+		if composeID := strings.TrimSpace(model.ComposeID.ValueString()); composeID != "" {
+			return "compose:" + composeID
+		}
+	}
+	if !model.PreviewDeploymentID.IsNull() && !model.PreviewDeploymentID.IsUnknown() {
+		if previewID := strings.TrimSpace(model.PreviewDeploymentID.ValueString()); previewID != "" {
+			return "preview:" + previewID
+		}
+	}
+	if !model.Host.IsNull() && !model.Host.IsUnknown() {
+		if host := strings.ToLower(strings.TrimSpace(model.Host.ValueString())); host != "" {
+			return "host:" + host
+		}
+	}
+	return "global"
+}
+
+func lockDomainMutationScope(scope string) func() {
+	newLock := &sync.Mutex{}
+	lockValue, _ := domainMutationLocks.LoadOrStore(scope, newLock)
+	lock, ok := lockValue.(*sync.Mutex)
+	if !ok {
+		// Defensive fallback to satisfy forcetypeassert.
+		lock = newLock
+		domainMutationLocks.Store(scope, lock)
+	}
+	lock.Lock()
+	return func() {
+		lock.Unlock()
+	}
 }

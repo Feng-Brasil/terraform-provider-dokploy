@@ -259,6 +259,7 @@ resource "dokploy_compose" "server_specific" {
 - `custom_git_url` (String) Custom Git repository URL (for source_type 'git').
 - `deploy_on_create` (Boolean) Trigger a deployment after creating the compose stack.
 - `description` (String) A description of the compose stack.
+- `detach_dokploy_network` (Boolean) Detach the default dokploy-network from this compose service.
 - `enable_submodules` (Boolean) Enable Git submodules support.
 - `env` (String, Sensitive) Environment variables in KEY=VALUE format, one per line.
 - `gitea_branch` (String) Gitea branch to deploy from.
@@ -276,6 +277,7 @@ resource "dokploy_compose" "server_specific" {
 - `gitlab_repository` (String) GitLab repository name.
 - `isolated_deployment` (Boolean) Enable isolated deployments.
 - `isolated_deployments_volume` (Boolean) Enable isolated deployment volumes.
+- `network_ids` (List of String) List of Dokploy network IDs to attach to this compose service.
 - `owner` (String) Repository owner/organization for GitHub source.
 - `randomize` (Boolean) Randomize service names.
 - `repository` (String) Repository name for GitHub source (e.g., 'my-repo').

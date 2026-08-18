@@ -112,14 +112,16 @@ type ApplicationResourceModel struct {
 	CreateEnvFile types.Bool   `tfsdk:"create_env_file"`
 
 	// Runtime configuration
-	AutoDeploy        types.Bool   `tfsdk:"auto_deploy"`
-	Replicas          types.Int64  `tfsdk:"replicas"`
-	MemoryLimit       types.Int64  `tfsdk:"memory_limit"`
-	MemoryReservation types.Int64  `tfsdk:"memory_reservation"`
-	CpuLimit          types.Int64  `tfsdk:"cpu_limit"`
-	CpuReservation    types.Int64  `tfsdk:"cpu_reservation"`
-	Command           types.String `tfsdk:"command"`
-	Args              types.String `tfsdk:"args"`
+	AutoDeploy           types.Bool   `tfsdk:"auto_deploy"`
+	Replicas             types.Int64  `tfsdk:"replicas"`
+	MemoryLimit          types.Int64  `tfsdk:"memory_limit"`
+	MemoryReservation    types.Int64  `tfsdk:"memory_reservation"`
+	CpuLimit             types.Int64  `tfsdk:"cpu_limit"`
+	CpuReservation       types.Int64  `tfsdk:"cpu_reservation"`
+	Command              types.String `tfsdk:"command"`
+	Args                 types.String `tfsdk:"args"`
+	NetworkIDs           types.List   `tfsdk:"network_ids"`
+	DetachDokployNetwork types.Bool   `tfsdk:"detach_dokploy_network"`
 
 	// Preview deployments
 	IsPreviewDeploymentsActive            types.Bool   `tfsdk:"preview_deployments_enabled"`
@@ -521,6 +523,18 @@ func (r *ApplicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"args": schema.StringAttribute{
 				Optional:    true,
 				Description: "Arguments to pass to the command.",
+			},
+			"network_ids": schema.ListAttribute{
+				Optional:    true,
+				Computed:    true,
+				ElementType: types.StringType,
+				Description: "List of Dokploy network IDs to attach to this service.",
+			},
+			"detach_dokploy_network": schema.BoolAttribute{
+				Optional:    true,
+				Computed:    true,
+				Default:     booldefault.StaticBool(false),
+				Description: "Detach the default dokploy-network from this service.",
 			},
 
 			// Preview deployments
@@ -983,6 +997,19 @@ func (r *ApplicationResource) updateGeneralSettings(appID string, plan *Applicat
 	if !plan.Args.IsNull() && !plan.Args.IsUnknown() {
 		generalApp.Args = client.StringOrStringSlice(plan.Args.ValueString())
 	}
+	if !plan.NetworkIDs.IsNull() && !plan.NetworkIDs.IsUnknown() {
+		var networkIDs []string
+		diags := plan.NetworkIDs.ElementsAs(context.Background(), &networkIDs, false)
+		if diags.HasError() {
+			return fmt.Errorf("invalid value for network_ids")
+		}
+		generalApp.NetworkIds = networkIDs
+		generalApp.NetworkIdsSet = true
+	}
+	if !plan.DetachDokployNetwork.IsNull() && !plan.DetachDokployNetwork.IsUnknown() {
+		generalApp.DetachDokployNetwork = plan.DetachDokployNetwork.ValueBool()
+		generalApp.DetachDokployNetworkSet = true
+	}
 
 	// Preview deployments
 	generalApp.IsPreviewDeploymentsActive = plan.IsPreviewDeploymentsActive.ValueBool()
@@ -1257,6 +1284,13 @@ func updatePlanFromApplication(plan *ApplicationResourceModel, app *client.Appli
 	// Update computed fields
 	plan.AutoDeploy = types.BoolValue(app.AutoDeploy)
 	plan.EnableSubmodules = types.BoolValue(app.EnableSubmodules)
+	// Some Dokploy responses may omit detachDokployNetwork, which decodes as
+	// false. Preserve plan value unless API explicitly returns true.
+	if app.DetachDokployNetwork {
+		plan.DetachDokployNetwork = types.BoolValue(true)
+	} else if plan.DetachDokployNetwork.IsNull() || plan.DetachDokployNetwork.IsUnknown() {
+		plan.DetachDokployNetwork = types.BoolValue(false)
+	}
 
 	if app.Replicas > 0 {
 		plan.Replicas = types.Int64Value(int64(app.Replicas))
@@ -1467,6 +1501,13 @@ func updatePlanFromApplication(plan *ApplicationResourceModel, app *client.Appli
 		if listVal, diag := types.ListValueFrom(context.Background(), types.StringType, app.WatchPaths); !diag.HasError() {
 			plan.WatchPaths = listVal
 		}
+	}
+	if len(app.NetworkIds) > 0 {
+		if listVal, diag := types.ListValueFrom(context.Background(), types.StringType, app.NetworkIds); !diag.HasError() {
+			plan.NetworkIDs = listVal
+		}
+	} else if plan.NetworkIDs.IsNull() || plan.NetworkIDs.IsUnknown() {
+		plan.NetworkIDs = types.ListNull(types.StringType)
 	}
 
 	// Application status (computed)
@@ -1715,6 +1756,11 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 
 	// Runtime configuration
 	state.AutoDeploy = types.BoolValue(app.AutoDeploy)
+	if app.DetachDokployNetwork {
+		state.DetachDokployNetwork = types.BoolValue(true)
+	} else if state.DetachDokployNetwork.IsNull() || state.DetachDokployNetwork.IsUnknown() {
+		state.DetachDokployNetwork = types.BoolValue(false)
+	}
 	if app.Replicas > 0 {
 		state.Replicas = types.Int64Value(int64(app.Replicas))
 	}
@@ -1743,6 +1789,13 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 	}
 	if app.Args != "" {
 		state.Args = types.StringValue(string(app.Args))
+	}
+	if len(app.NetworkIds) > 0 {
+		if listVal, diags := types.ListValueFrom(context.Background(), types.StringType, app.NetworkIds); !diags.HasError() {
+			state.NetworkIDs = listVal
+		}
+	} else if state.NetworkIDs.IsNull() || state.NetworkIDs.IsUnknown() {
+		state.NetworkIDs = types.ListNull(types.StringType)
 	}
 
 	// Preview deployments - always set computed fields
