@@ -3,12 +3,12 @@
 page_title: "dokploy_network Resource - dokploy"
 subcategory: ""
 description: |-
-  Manages a Docker network in Dokploy.
+  Manages Docker networks in Dokploy.
 ---
 
 # dokploy_network (Resource)
 
-Manages a Docker network in Dokploy.
+Manages Docker networks in Dokploy.
 
 ## Example Usage
 
@@ -43,6 +43,12 @@ resource "dokploy_network" "overlay_network" {
   enable_ipv4 = true
   enable_ipv6 = false
   server_id   = var.server_id
+
+  ipam {
+    config {
+      subnet = "10.55.0.0/16"
+    }
+  }
 }
 ```
 
@@ -91,6 +97,9 @@ Optional:
 
 Import is supported using the following syntax:
 
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
 ```shell
+# Networks can be imported using their ID
 terraform import dokploy_network.bridge_network "network-id-123"
 ```
