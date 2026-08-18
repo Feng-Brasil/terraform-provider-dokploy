@@ -125,6 +125,7 @@ func (p *DokployProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewUserPermissionsResource,
 		NewAIResource,
 		NewCertificateResource,
+		NewNetworkResource,
 	}
 }
 
@@ -153,6 +154,8 @@ func (p *DokployProvider) DataSources(_ context.Context) []func() datasource.Dat
 		NewDestinationsDataSource,
 		NewDockerContainerDataSource,
 		NewDockerContainersDataSource,
+		NewNetworkDataSource,
+		NewNetworksDataSource,
 	}
 }
 

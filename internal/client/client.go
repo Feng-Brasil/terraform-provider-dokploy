@@ -3706,6 +3706,112 @@ func (c *DokployClient) ListRegistries() ([]Registry, error) {
 	return registries, nil
 }
 
+// NetworkIPAMConfig represents one IPAM config entry for a Docker network.
+type NetworkIPAMConfig struct {
+	Subnet  string `json:"subnet,omitempty"`
+	Gateway string `json:"gateway,omitempty"`
+	IPRange string `json:"ipRange,omitempty"`
+}
+
+// NetworkIPAM represents IPAM settings for a Docker network.
+type NetworkIPAM struct {
+	Driver string              `json:"driver,omitempty"`
+	Config []NetworkIPAMConfig `json:"config,omitempty"`
+}
+
+// Network represents a Dokploy managed Docker network.
+type Network struct {
+	NetworkID      string       `json:"networkId"`
+	Name           string       `json:"name"`
+	Driver         string       `json:"driver"`
+	Internal       bool         `json:"internal"`
+	Attachable     bool         `json:"attachable"`
+	EnableIPv4     bool         `json:"enableIPv4"`
+	EnableIPv6     bool         `json:"enableIPv6"`
+	MTU            *int64       `json:"mtu,omitempty"`
+	IPAM           *NetworkIPAM `json:"ipam,omitempty"`
+	OrganizationID string       `json:"organizationId"`
+	ServerID       *string      `json:"serverId,omitempty"`
+	CreatedAt      string       `json:"createdAt"`
+}
+
+func (c *DokployClient) CreateNetwork(network Network) (*Network, error) {
+	payload := map[string]interface{}{
+		"name":       network.Name,
+		"internal":   network.Internal,
+		"attachable": network.Attachable,
+		"enableIPv4": network.EnableIPv4,
+		"enableIPv6": network.EnableIPv6,
+	}
+
+	if network.Driver != "" {
+		payload["driver"] = network.Driver
+	}
+	if network.MTU != nil {
+		payload["mtu"] = *network.MTU
+	}
+	if network.IPAM != nil {
+		payload["ipam"] = network.IPAM
+	}
+	if network.ServerID != nil {
+		payload["serverId"] = *network.ServerID
+	}
+
+	resp, err := c.doRequest("POST", "network.create", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	var result Network
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+func (c *DokployClient) GetNetwork(id string) (*Network, error) {
+	endpoint := fmt.Sprintf("network.one?networkId=%s", url.QueryEscape(id))
+	resp, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result Network
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+func (c *DokployClient) DeleteNetwork(id string) error {
+	payload := map[string]string{
+		"networkId": id,
+	}
+	_, err := c.doRequest("POST", "network.remove", payload)
+	return err
+}
+
+func (c *DokployClient) ListNetworks(serverID string) ([]Network, error) {
+	endpoint := "network.all"
+	if serverID != "" {
+		endpoint = fmt.Sprintf("network.all?serverId=%s", url.QueryEscape(serverID))
+	}
+
+	resp, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []Network
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 // Destination represents a backup destination (S3, MinIO, etc.)
 type Destination struct {
 	DestinationID   string  `json:"destinationId"`
