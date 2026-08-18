@@ -483,6 +483,7 @@ resource "dokploy_application" "drop_app" {
 - `custom_git_url` (String) Custom Git repository URL (for source_type 'git').
 - `deploy_on_create` (Boolean) Trigger a deployment after creating the application.
 - `description` (String) A description of the application.
+- `detach_dokploy_network` (Boolean) Detach the default dokploy-network from this service.
 - `docker_build_stage` (String) Target stage for multi-stage Docker builds.
 - `docker_context_path` (String) Docker build context path.
 - `docker_image` (String) Docker image to use (for source_type 'docker'). Example: 'nginx:alpine'.
@@ -517,6 +518,7 @@ resource "dokploy_application" "drop_app" {
 - `memory_limit` (Number) Memory limit in bytes. Example: 536870912 (512MB).
 - `memory_reservation` (Number) Memory reservation (soft limit) in bytes.
 - `mode_swarm` (String) Service mode for Docker Swarm: replicated or global (JSON format).
+- `network_ids` (List of String) List of Dokploy network IDs to attach to this service.
 - `network_swarm` (String) Network configuration for Docker Swarm mode (JSON array format).
 - `owner` (String) Repository owner/organization for GitHub source. Prefer 'github_owner' for consistency.
 - `password` (String, Sensitive) Password for Docker registry authentication.

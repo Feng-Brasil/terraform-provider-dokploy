@@ -828,15 +828,19 @@ type Application struct {
 
 	// Runtime configuration (application.update)
 	// Note: The API accepts and returns memoryLimit/memoryReservation/cpuLimit/cpuReservation as strings
-	AutoDeploy        bool                `json:"autoDeploy"`
-	Replicas          int                 `json:"replicas"`
-	MemoryLimit       json.Number         `json:"memoryLimit"`
-	MemoryReservation json.Number         `json:"memoryReservation"`
-	CpuLimit          json.Number         `json:"cpuLimit"`
-	CpuReservation    json.Number         `json:"cpuReservation"`
-	Command           string              `json:"command"`
-	Args              StringOrStringSlice `json:"args"`
-	EntryPoint        string              `json:"entrypoint"`
+	AutoDeploy              bool                `json:"autoDeploy"`
+	Replicas                int                 `json:"replicas"`
+	MemoryLimit             json.Number         `json:"memoryLimit"`
+	MemoryReservation       json.Number         `json:"memoryReservation"`
+	CpuLimit                json.Number         `json:"cpuLimit"`
+	CpuReservation          json.Number         `json:"cpuReservation"`
+	Command                 string              `json:"command"`
+	Args                    StringOrStringSlice `json:"args"`
+	EntryPoint              string              `json:"entrypoint"`
+	NetworkIds              []string            `json:"networkIds"`
+	DetachDokployNetwork    bool                `json:"detachDokployNetwork"`
+	NetworkIdsSet           bool                `json:"-"`
+	DetachDokployNetworkSet bool                `json:"-"`
 
 	// Docker Swarm configuration
 	HealthCheckSwarm     map[string]interface{}   `json:"healthCheckSwarm"`
@@ -1003,6 +1007,12 @@ func (c *DokployClient) UpdateApplicationGeneral(app Application) (*Application,
 	}
 	if app.EntryPoint != "" {
 		payload["entrypoint"] = app.EntryPoint
+	}
+	if app.NetworkIdsSet {
+		payload["networkIds"] = app.NetworkIds
+	}
+	if app.DetachDokployNetworkSet {
+		payload["detachDokployNetwork"] = app.DetachDokployNetwork
 	}
 
 	// Docker Swarm configuration
@@ -1564,11 +1574,14 @@ type Compose struct {
 	Replicas   int  `json:"replicas"`
 
 	// Advanced configuration
-	Command                   string `json:"command"`
-	Suffix                    string `json:"suffix"`
-	Randomize                 bool   `json:"randomize"`
-	IsolatedDeployment        bool   `json:"isolatedDeployment"`
-	IsolatedDeploymentsVolume bool   `json:"isolatedDeploymentsVolume"`
+	Command                   string   `json:"command"`
+	Suffix                    string   `json:"suffix"`
+	Randomize                 bool     `json:"randomize"`
+	IsolatedDeployment        bool     `json:"isolatedDeployment"`
+	IsolatedDeploymentsVolume bool     `json:"isolatedDeploymentsVolume"`
+	NetworkIds                []string `json:"networkIds"`
+	DetachDokployNetwork      bool     `json:"detachDokployNetwork"`
+	NetworkIdsSet             bool     `json:"-"`
 
 	// Environment
 	Env string `json:"env"`
@@ -1769,9 +1782,13 @@ func (c *DokployClient) CreateCompose(comp Compose) (*Compose, error) {
 	updatePayload["randomize"] = comp.Randomize
 	updatePayload["isolatedDeployment"] = comp.IsolatedDeployment
 	updatePayload["isolatedDeploymentsVolume"] = comp.IsolatedDeploymentsVolume
+	updatePayload["detachDokployNetwork"] = comp.DetachDokployNetwork
 	// Send watchPaths if not nil (allows clearing by sending empty array)
 	if comp.WatchPaths != nil {
 		updatePayload["watchPaths"] = comp.WatchPaths
+	}
+	if comp.NetworkIdsSet {
+		updatePayload["networkIds"] = comp.NetworkIds
 	}
 
 	if comp.SourceType == "" {
@@ -1963,9 +1980,13 @@ func (c *DokployClient) UpdateCompose(comp Compose) (*Compose, error) {
 	payload["randomize"] = comp.Randomize
 	payload["isolatedDeployment"] = comp.IsolatedDeployment
 	payload["isolatedDeploymentsVolume"] = comp.IsolatedDeploymentsVolume
+	payload["detachDokployNetwork"] = comp.DetachDokployNetwork
 	// Send watchPaths if not nil (allows clearing by sending empty array)
 	if comp.WatchPaths != nil {
 		payload["watchPaths"] = comp.WatchPaths
+	}
+	if comp.NetworkIdsSet {
+		payload["networkIds"] = comp.NetworkIds
 	}
 
 	if comp.EnvironmentID != "" {

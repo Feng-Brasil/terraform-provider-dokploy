@@ -95,6 +95,8 @@ type ComposeResourceModel struct {
 	Randomize                 types.Bool   `tfsdk:"randomize"`
 	IsolatedDeployment        types.Bool   `tfsdk:"isolated_deployment"`
 	IsolatedDeploymentsVolume types.Bool   `tfsdk:"isolated_deployments_volume"`
+	NetworkIDs                types.List   `tfsdk:"network_ids"`
+	DetachDokployNetwork      types.Bool   `tfsdk:"detach_dokploy_network"`
 	WatchPaths                types.List   `tfsdk:"watch_paths"`
 
 	// Computed status
@@ -372,6 +374,18 @@ func (r *ComposeResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				Description: "Enable isolated deployment volumes.",
 				Default:     booldefault.StaticBool(false),
 			},
+			"network_ids": schema.ListAttribute{
+				Optional:    true,
+				Computed:    true,
+				ElementType: types.StringType,
+				Description: "List of Dokploy network IDs to attach to this compose service.",
+			},
+			"detach_dokploy_network": schema.BoolAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Detach the default dokploy-network from this compose service.",
+				Default:     booldefault.StaticBool(false),
+			},
 			"watch_paths": schema.ListAttribute{
 				Optional:    true,
 				ElementType: types.StringType,
@@ -445,6 +459,16 @@ func (r *ComposeResource) Create(ctx context.Context, req resource.CreateRequest
 			return
 		}
 	}
+	var networkIDs []string
+	networkIDsSet := false
+	if !plan.NetworkIDs.IsNull() && !plan.NetworkIDs.IsUnknown() {
+		diags = plan.NetworkIDs.ElementsAs(ctx, &networkIDs, false)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		networkIDsSet = true
+	}
 
 	comp := client.Compose{
 		Name:              plan.Name.ValueString(),
@@ -466,6 +490,9 @@ func (r *ComposeResource) Create(ctx context.Context, req resource.CreateRequest
 		Randomize:                 plan.Randomize.ValueBool(),
 		IsolatedDeployment:        plan.IsolatedDeployment.ValueBool(),
 		IsolatedDeploymentsVolume: plan.IsolatedDeploymentsVolume.ValueBool(),
+		DetachDokployNetwork:      plan.DetachDokployNetwork.ValueBool(),
+		NetworkIds:                networkIDs,
+		NetworkIdsSet:             networkIDsSet,
 		WatchPaths:                watchPaths,
 	}
 
@@ -633,6 +660,8 @@ func (r *ComposeResource) Update(ctx context.Context, req resource.UpdateRequest
 			plan.Randomize.Equal(state.Randomize) &&
 			plan.IsolatedDeployment.Equal(state.IsolatedDeployment) &&
 			plan.IsolatedDeploymentsVolume.Equal(state.IsolatedDeploymentsVolume) &&
+			plan.DetachDokployNetwork.Equal(state.DetachDokployNetwork) &&
+			plan.NetworkIDs.Equal(state.NetworkIDs) &&
 			plan.WatchPaths.Equal(state.WatchPaths)
 
 		if onlyEnvironmentChanged {
@@ -653,6 +682,16 @@ func (r *ComposeResource) Update(ctx context.Context, req resource.UpdateRequest
 		if resp.Diagnostics.HasError() {
 			return
 		}
+	}
+	var networkIDs []string
+	networkIDsSet := false
+	if !plan.NetworkIDs.IsNull() && !plan.NetworkIDs.IsUnknown() {
+		diags = plan.NetworkIDs.ElementsAs(ctx, &networkIDs, false)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		networkIDsSet = true
 	}
 
 	comp := client.Compose{
@@ -675,6 +714,9 @@ func (r *ComposeResource) Update(ctx context.Context, req resource.UpdateRequest
 		Randomize:                 plan.Randomize.ValueBool(),
 		IsolatedDeployment:        plan.IsolatedDeployment.ValueBool(),
 		IsolatedDeploymentsVolume: plan.IsolatedDeploymentsVolume.ValueBool(),
+		DetachDokployNetwork:      plan.DetachDokployNetwork.ValueBool(),
+		NetworkIds:                networkIDs,
+		NetworkIdsSet:             networkIDsSet,
 		WatchPaths:                watchPaths,
 	}
 
@@ -954,6 +996,14 @@ func readComposeIntoState(ctx context.Context, state *ComposeResourceModel, comp
 	state.Randomize = types.BoolValue(comp.Randomize)
 	state.IsolatedDeployment = types.BoolValue(comp.IsolatedDeployment)
 	state.IsolatedDeploymentsVolume = types.BoolValue(comp.IsolatedDeploymentsVolume)
+	state.DetachDokployNetwork = types.BoolValue(comp.DetachDokployNetwork)
+	if len(comp.NetworkIds) > 0 {
+		networkIDsList, d := types.ListValueFrom(ctx, types.StringType, comp.NetworkIds)
+		diags.Append(d...)
+		state.NetworkIDs = networkIDsList
+	} else {
+		state.NetworkIDs = types.ListNull(types.StringType)
+	}
 
 	// WatchPaths - convert []string to types.List
 	if len(comp.WatchPaths) > 0 {
