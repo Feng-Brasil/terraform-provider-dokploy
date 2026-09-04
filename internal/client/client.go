@@ -2598,9 +2598,15 @@ type DomainValidationResult struct {
 	Error      string `json:"error"`
 }
 
-func (c *DokployClient) ValidateDomain(domain, serverIP string) (*DomainValidationResult, error) {
+func (c *DokployClient) ValidateDomain(domain, serverID, serverIP string) (*DomainValidationResult, error) {
 	payload := map[string]interface{}{
 		"domain": domain,
+	}
+	// Current Dokploy API (2026-08+) resolves expected IPs from serverId via
+	// getServerIpCandidates. Older versions accepted serverIp directly. Send
+	// both so unknown keys are stripped by whichever schema is in use.
+	if serverID != "" {
+		payload["serverId"] = serverID
 	}
 	if serverIP != "" {
 		payload["serverIp"] = serverIP

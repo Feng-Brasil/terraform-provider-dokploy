@@ -18,8 +18,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-var _ resource.Resource = &DomainResource{}
-var _ resource.ResourceWithImportState = &DomainResource{}
+var (
+	_ resource.Resource                = &DomainResource{}
+	_ resource.ResourceWithImportState = &DomainResource{}
+)
 
 const (
 	domainValidationTimeout       = 20 * time.Minute
@@ -511,7 +513,7 @@ func (r *DomainResource) validateDomainBeforeMutation(ctx context.Context, plan 
 		return fmt.Errorf("host is required for domain validation")
 	}
 
-	serverIP, err := r.resolveServerIPForDomainValidation(plan)
+	serverID, serverIP, err := r.resolveServerForDomainValidation(plan)
 	if err != nil {
 		return err
 	}
@@ -525,7 +527,7 @@ func (r *DomainResource) validateDomainBeforeMutation(ctx context.Context, plan 
 	var lastErr error
 
 	for {
-		result, validateErr := r.client.ValidateDomain(normalizedHost, serverIP)
+		result, validateErr := r.client.ValidateDomain(normalizedHost, serverID, serverIP)
 		if validateErr == nil {
 			if result.IsValid {
 				return nil
@@ -535,8 +537,8 @@ func (r *DomainResource) validateDomainBeforeMutation(ctx context.Context, plan 
 			if result.Error != "" {
 				invalidReason = fmt.Sprintf("%s: %s", invalidReason, result.Error)
 			}
-			if serverIP != "" && result.ResolvedIP != "" {
-				invalidReason = fmt.Sprintf("%s (resolved_ip=%s expected_ip=%s)", invalidReason, result.ResolvedIP, serverIP)
+			if details := formatDomainValidationDetails(result.ResolvedIP, serverID, serverIP); details != "" {
+				invalidReason = fmt.Sprintf("%s (%s)", invalidReason, details)
 			}
 			lastErr = fmt.Errorf("%s", invalidReason)
 		} else {
@@ -557,25 +559,47 @@ func (r *DomainResource) validateDomainBeforeMutation(ctx context.Context, plan 
 	}
 }
 
-func (r *DomainResource) resolveServerIPForDomainValidation(plan DomainResourceModel) (string, error) {
+func formatDomainValidationDetails(resolvedIP, serverID, serverIP string) string {
+	var parts []string
+	if resolvedIP != "" {
+		parts = append(parts, fmt.Sprintf("resolved_ip=%s", resolvedIP))
+	}
+	if serverIP != "" {
+		parts = append(parts, fmt.Sprintf("server_ip=%s", serverIP))
+	}
+	if serverID != "" {
+		parts = append(parts, fmt.Sprintf("server_id=%s", serverID))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (r *DomainResource) resolveServerForDomainValidation(plan DomainResourceModel) (string, string, error) {
 	if !plan.ApplicationID.IsNull() && !plan.ApplicationID.IsUnknown() && plan.ApplicationID.ValueString() != "" {
 		app, err := r.client.GetApplication(plan.ApplicationID.ValueString())
 		if err != nil {
-			return "", fmt.Errorf("failed to resolve application server for domain validation: %w", err)
+			return "", "", fmt.Errorf("failed to resolve application server for domain validation: %w", err)
 		}
-		return r.resolveServerIPFromServerID(app.ServerID)
+		serverIP, err := r.resolveServerIPFromServerID(app.ServerID)
+		if err != nil {
+			return "", "", err
+		}
+		return strings.TrimSpace(app.ServerID), serverIP, nil
 	}
 
 	if !plan.ComposeID.IsNull() && !plan.ComposeID.IsUnknown() && plan.ComposeID.ValueString() != "" {
 		comp, err := r.client.GetCompose(plan.ComposeID.ValueString())
 		if err != nil {
-			return "", fmt.Errorf("failed to resolve compose server for domain validation: %w", err)
+			return "", "", fmt.Errorf("failed to resolve compose server for domain validation: %w", err)
 		}
-		return r.resolveServerIPFromServerID(comp.ServerID)
+		serverIP, err := r.resolveServerIPFromServerID(comp.ServerID)
+		if err != nil {
+			return "", "", err
+		}
+		return strings.TrimSpace(comp.ServerID), serverIP, nil
 	}
 
 	// preview_deployment_id domains may not expose a straightforward server lookup in the current client.
-	return "", nil
+	return "", "", nil
 }
 
 func (r *DomainResource) resolveServerIPFromServerID(serverID string) (string, error) {
