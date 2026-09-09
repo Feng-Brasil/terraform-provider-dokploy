@@ -5,8 +5,70 @@ import (
 	"os"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
+
+func TestShouldPreserveConfiguredComposeAppName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		configured   types.String
+		apiAppName   string
+		wantPreserve bool
+	}{
+		{
+			name:         "null configured hydrates from API",
+			configured:   types.StringNull(),
+			apiAppName:   "acme-st-stg-rabbitmq-tavufy",
+			wantPreserve: false,
+		},
+		{
+			name:         "unknown configured hydrates from API",
+			configured:   types.StringUnknown(),
+			apiAppName:   "acme-st-stg-rabbitmq-tavufy",
+			wantPreserve: false,
+		},
+		{
+			name:         "empty configured hydrates from API",
+			configured:   types.StringValue(""),
+			apiAppName:   "acme-st-stg-rabbitmq-tavufy",
+			wantPreserve: false,
+		},
+		{
+			name:         "exact match does not need preserve",
+			configured:   types.StringValue("acme-staging-rabbitmq"),
+			apiAppName:   "acme-staging-rabbitmq",
+			wantPreserve: false,
+		},
+		{
+			name:         "cloud uniqueness suffix is preserved",
+			configured:   types.StringValue("acme-st-stg-rabbitmq"),
+			apiAppName:   "acme-st-stg-rabbitmq-tavufy",
+			wantPreserve: true,
+		},
+		{
+			name:         "in-place rename keeps planned name when API returns old suffixed value",
+			configured:   types.StringValue("acme-staging-rabbitmq"),
+			apiAppName:   "acme-st-stg-rabbitmq-tavufy",
+			wantPreserve: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			state := &ComposeResourceModel{AppName: tt.configured}
+			got := shouldPreserveConfiguredComposeAppName(state, tt.apiAppName)
+			if got != tt.wantPreserve {
+				t.Errorf("shouldPreserveConfiguredComposeAppName(%q, %q) = %v, want %v",
+					tt.configured, tt.apiAppName, got, tt.wantPreserve)
+			}
+		})
+	}
+}
 
 func TestAccComposeResource(t *testing.T) {
 	host := os.Getenv("DOKPLOY_HOST")

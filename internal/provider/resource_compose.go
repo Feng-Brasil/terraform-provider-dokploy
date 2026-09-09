@@ -135,7 +135,7 @@ func (r *ComposeResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"app_name": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "The app name used for Docker service naming. Auto-generated if not specified.",
+				Description: "The app name used for Docker service naming. Auto-generated if not specified. Dokploy may append a uniqueness suffix and may ignore in-place renames; the configured value is kept in Terraform state.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -847,8 +847,9 @@ func readComposeIntoState(ctx context.Context, state *ComposeResourceModel, comp
 		state.EnvironmentID = types.StringValue(comp.EnvironmentID)
 	}
 	if comp.AppName != "" {
-		// Dokploy may append a runtime suffix to appName when isolated deployment is enabled.
-		// Preserve the configured base app_name to keep Terraform state stable.
+		// Dokploy may append a uniqueness suffix and may ignore in-place
+		// renames. Preserve the configured/planned app_name so Terraform
+		// does not see an inconsistent result after apply.
 		if !shouldPreserveConfiguredComposeAppName(state, comp.AppName) {
 			state.AppName = types.StringValue(comp.AppName)
 		}
@@ -1050,11 +1051,8 @@ func shouldPreserveConfiguredComposeAppName(state *ComposeResourceModel, apiAppN
 		return false
 	}
 
-	// Cloud may append an ephemeral suffix to app_name (e.g. "<base>-abc123").
-	// When that happens, preserve configured value in Terraform state.
-	if apiAppName == configuredAppName {
-		return false
-	}
-
-	return strings.HasPrefix(apiAppName, configuredAppName+"-")
+	// Keep any known configured/planned value. Dokploy may append a uniqueness
+	// suffix and compose.update often keeps the original appName, including
+	// after a rename (planned "new-name" vs API "old-name-suffix").
+	return configuredAppName != apiAppName
 }
