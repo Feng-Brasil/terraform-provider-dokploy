@@ -9,6 +9,32 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
+func TestDeployOnChangeEnabled(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		value types.Bool
+		want  bool
+	}{
+		{name: "null defaults to enabled", value: types.BoolNull(), want: true},
+		{name: "unknown defaults to enabled", value: types.BoolUnknown(), want: true},
+		{name: "true stays enabled", value: types.BoolValue(true), want: true},
+		{name: "false disables deploy", value: types.BoolValue(false), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := deployOnChangeEnabled(tt.value)
+			if got != tt.want {
+				t.Errorf("deployOnChangeEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestComposeFileContentChanged(t *testing.T) {
 	t.Parallel()
 
@@ -173,7 +199,7 @@ services:
 				ResourceName:            "dokploy_compose.test",
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"deploy_on_create", "branch", "trigger_type"}, // deploy_on_create is write-only; branch/trigger_type have API defaults that don't apply to raw source type in this test
+				ImportStateVerifyIgnore: []string{"deploy_on_create", "deploy_on_change", "branch", "trigger_type"}, // deploy flags are not returned by the API; branch/trigger_type have API defaults that don't apply to raw source type in this test
 			},
 		},
 	})
