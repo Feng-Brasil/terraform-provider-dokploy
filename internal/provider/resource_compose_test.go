@@ -9,6 +9,59 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
+func TestComposeFileContentChanged(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		plan    types.String
+		state   types.String
+		changed bool
+	}{
+		{
+			name:    "identical yaml does not deploy",
+			plan:    types.StringValue("services:\n  web:\n    image: nginx:latest\n"),
+			state:   types.StringValue("services:\n  web:\n    image: nginx:latest\n"),
+			changed: false,
+		},
+		{
+			name:    "yaml edit deploys",
+			plan:    types.StringValue("services:\n  web:\n    image: nginx:alpine\n"),
+			state:   types.StringValue("services:\n  web:\n    image: nginx:latest\n"),
+			changed: true,
+		},
+		{
+			name:    "both null does not deploy",
+			plan:    types.StringNull(),
+			state:   types.StringNull(),
+			changed: false,
+		},
+		{
+			name:    "new yaml against empty state deploys",
+			plan:    types.StringValue("services: {}\n"),
+			state:   types.StringNull(),
+			changed: true,
+		},
+		{
+			name:    "unknown plan does not deploy",
+			plan:    types.StringUnknown(),
+			state:   types.StringValue("services: {}\n"),
+			changed: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := composeFileContentChanged(tt.plan, tt.state)
+			if got != tt.changed {
+				t.Errorf("composeFileContentChanged() = %v, want %v", got, tt.changed)
+			}
+		})
+	}
+}
+
 func TestShouldPreserveConfiguredComposeAppName(t *testing.T) {
 	t.Parallel()
 
