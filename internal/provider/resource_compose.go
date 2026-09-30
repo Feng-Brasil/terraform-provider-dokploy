@@ -106,6 +106,7 @@ type ComposeResourceModel struct {
 
 	// Deployment options
 	DeployOnCreate types.Bool `tfsdk:"deploy_on_create"`
+	DeployOnChange types.Bool `tfsdk:"deploy_on_change"`
 }
 
 func (r *ComposeResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -157,7 +158,7 @@ func (r *ComposeResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"compose_file_content": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "Raw docker-compose.yml content (for source_type 'raw'). When this value changes, apply updates the stack and triggers a deployment so the running services match the desired file.",
+				Description: "Raw docker-compose.yml content (for source_type 'raw'). When this value changes and deploy_on_change is true, apply updates the stack and triggers a deployment so the running services match the desired file.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -417,6 +418,12 @@ func (r *ComposeResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			},
 
 			// Deployment options
+			"deploy_on_change": schema.BoolAttribute{
+				Optional:    true,
+				Computed:    true,
+				Default:     booldefault.StaticBool(true),
+				Description: "When true (default), apply triggers a deployment if compose_file_content changed. Set to false to update the stack without deploying.",
+			},
 			"deploy_on_create": schema.BoolAttribute{
 				Optional:    true,
 				Description: "Trigger a deployment after creating the compose stack.",
@@ -796,7 +803,7 @@ func (r *ComposeResource) Update(ctx context.Context, req resource.UpdateRequest
 	readComposeIntoState(ctx, &plan, updatedComp, &resp.Diagnostics)
 	plan.Env = effectiveEnv
 
-	if composeFileChanged {
+	if composeFileChanged && deployOnChangeEnabled(plan.DeployOnChange) {
 		serverID := plan.ServerID.ValueString()
 		if plan.ServerID.IsNull() || plan.ServerID.IsUnknown() {
 			serverID = state.ServerID.ValueString()
@@ -848,6 +855,15 @@ func composeFileContentChanged(plan, state types.String) bool {
 		return false
 	}
 	return !plan.Equal(state)
+}
+
+// deployOnChangeEnabled reports whether an update should trigger a deployment.
+// Null and unknown values follow the schema default of true.
+func deployOnChangeEnabled(value types.Bool) bool {
+	if value.IsNull() || value.IsUnknown() {
+		return true
+	}
+	return value.ValueBool()
 }
 
 func inferComposeSourceType(plan *ComposeResourceModel) types.String {

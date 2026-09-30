@@ -481,6 +481,7 @@ resource "dokploy_application" "drop_app" {
 - `custom_git_build_path` (String) Build path within the custom Git repository.
 - `custom_git_ssh_key_id` (String) SSH key ID for accessing the custom Git repository.
 - `custom_git_url` (String) Custom Git repository URL (for source_type 'git').
+- `deploy_on_change` (Boolean) When true (default), apply triggers a deployment if any attribute other than domain routing changes. Domain routing attributes are traefik_config, preview_wildcard, preview_port, preview_https, preview_path, preview_certificate_type, and preview_custom_cert_resolver. Set to false to update the application without deploying.
 - `deploy_on_create` (Boolean) Trigger a deployment after creating the application.
 - `description` (String) A description of the application.
 - `detach_dokploy_network` (Boolean) Detach the default dokploy-network from this service.

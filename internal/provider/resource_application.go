@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/feng-brasil/terraform-provider-dokploy/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -153,6 +155,7 @@ type ApplicationResourceModel struct {
 
 	// Deployment options
 	DeployOnCreate types.Bool `tfsdk:"deploy_on_create"`
+	DeployOnChange types.Bool `tfsdk:"deploy_on_change"`
 
 	// Application status (computed)
 	ApplicationStatus types.String `tfsdk:"application_status"`
@@ -640,6 +643,12 @@ func (r *ApplicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 			},
 
 			// Deployment options
+			"deploy_on_change": schema.BoolAttribute{
+				Optional:    true,
+				Computed:    true,
+				Default:     booldefault.StaticBool(true),
+				Description: "When true (default), apply triggers a deployment if any attribute other than domain routing changes. Domain routing attributes are traefik_config, preview_wildcard, preview_port, preview_https, preview_path, preview_certificate_type, and preview_custom_cert_resolver. Set to false to update the application without deploying.",
+			},
 			"deploy_on_create": schema.BoolAttribute{
 				Optional:    true,
 				Description: "Trigger a deployment after creating the application.",
@@ -857,6 +866,9 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 	appID := state.ID.ValueString()
 	plan.ID = state.ID
 
+	// Decide before later steps copy API values back onto the plan.
+	shouldDeploy := deployOnChangeEnabled(plan.DeployOnChange) && applicationRequiresDeploy(plan, state)
+
 	// 0. Check if environment_id changed - if so, move the application first
 	if plan.EnvironmentID.ValueString() != state.EnvironmentID.ValueString() {
 		_, err := r.client.MoveApplication(appID, plan.EnvironmentID.ValueString())
@@ -915,6 +927,20 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 		plan.TraefikConfig = types.StringNull()
 	}
 
+	if shouldDeploy {
+		serverID := plan.ServerID.ValueString()
+		if plan.ServerID.IsNull() || plan.ServerID.IsUnknown() {
+			serverID = state.ServerID.ValueString()
+		}
+		if err := r.client.DeployApplication(appID, serverID); err != nil {
+			resp.Diagnostics.AddError(
+				"Error deploying application",
+				fmt.Sprintf("Application was updated but deployment failed: %s", err.Error()),
+			)
+			return
+		}
+	}
+
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
 }
@@ -944,6 +970,75 @@ func (r *ApplicationResource) ImportState(ctx context.Context, req resource.Impo
 }
 
 // Helper functions
+
+// applicationDomainFields are routing settings owned by domains and preview
+// hostnames. Changing only these does not redeploy the application.
+var applicationDomainFields = map[string]struct{}{
+	"traefik_config":               {},
+	"preview_wildcard":             {},
+	"preview_port":                 {},
+	"preview_https":                {},
+	"preview_path":                 {},
+	"preview_certificate_type":     {},
+	"preview_custom_cert_resolver": {},
+}
+
+// applicationDeployIgnoredFields never represent a desired runtime change.
+var applicationDeployIgnoredFields = map[string]struct{}{
+	"id":                 {},
+	"application_status": {},
+	"deploy_on_create":   {},
+	"deploy_on_change":   {},
+}
+
+// applicationRequiresDeploy reports whether the plan changes something other
+// than domain routing or deploy bookkeeping. Unknown planned values are
+// ignored so computed status cannot force a deployment by itself.
+func applicationRequiresDeploy(plan, state ApplicationResourceModel) bool {
+	planValue := reflect.ValueOf(plan)
+	stateValue := reflect.ValueOf(state)
+	planType := planValue.Type()
+
+	for i := 0; i < planType.NumField(); i++ {
+		field := planType.Field(i)
+		name := field.Tag.Get("tfsdk")
+		if name == "" {
+			continue
+		}
+		if _, skip := applicationDomainFields[name]; skip {
+			continue
+		}
+		if _, skip := applicationDeployIgnoredFields[name]; skip {
+			continue
+		}
+
+		planned, ok := planValue.Field(i).Interface().(attr.Value)
+		if !ok || planned.IsUnknown() {
+			continue
+		}
+		current, ok := stateValue.Field(i).Interface().(attr.Value)
+		if !ok {
+			continue
+		}
+		if !attrValuesEqual(planned, current) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// attrValuesEqual compares framework values. Two nulls are equal even when a
+// list or set has no element type, which List.Equal treats as unequal.
+func attrValuesEqual(planned, current attr.Value) bool {
+	if planned.IsNull() && current.IsNull() {
+		return true
+	}
+	if planned.IsUnknown() && current.IsUnknown() {
+		return true
+	}
+	return planned.Equal(current)
+}
 
 func inferSourceType(plan *ApplicationResourceModel) types.String {
 	if !plan.DockerImage.IsNull() && !plan.DockerImage.IsUnknown() && plan.DockerImage.ValueString() != "" {

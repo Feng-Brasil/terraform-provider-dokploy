@@ -5,8 +5,120 @@ import (
 	"os"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
+
+func TestApplicationRequiresDeploy(t *testing.T) {
+	t.Parallel()
+
+	base := ApplicationResourceModel{
+		Name:        types.StringValue("api"),
+		DockerImage: types.StringValue("nginx:latest"),
+		Env:         types.StringValue("A=1"),
+	}
+
+	tests := []struct {
+		name   string
+		plan   ApplicationResourceModel
+		state  ApplicationResourceModel
+		deploy bool
+	}{
+		{
+			name:   "unchanged config does not deploy",
+			plan:   base,
+			state:  base,
+			deploy: false,
+		},
+		{
+			name: "image change deploys",
+			plan: ApplicationResourceModel{
+				Name:        types.StringValue("api"),
+				DockerImage: types.StringValue("nginx:alpine"),
+				Env:         types.StringValue("A=1"),
+			},
+			state:  base,
+			deploy: true,
+		},
+		{
+			name: "env change deploys",
+			plan: ApplicationResourceModel{
+				Name:        types.StringValue("api"),
+				DockerImage: types.StringValue("nginx:latest"),
+				Env:         types.StringValue("A=2"),
+			},
+			state:  base,
+			deploy: true,
+		},
+		{
+			name: "traefik config alone does not deploy",
+			plan: ApplicationResourceModel{
+				Name:          types.StringValue("api"),
+				DockerImage:   types.StringValue("nginx:latest"),
+				Env:           types.StringValue("A=1"),
+				TraefikConfig: types.StringValue("http: {}"),
+			},
+			state:  base,
+			deploy: false,
+		},
+		{
+			name: "preview wildcard alone does not deploy",
+			plan: ApplicationResourceModel{
+				Name:            types.StringValue("api"),
+				DockerImage:     types.StringValue("nginx:latest"),
+				Env:             types.StringValue("A=1"),
+				PreviewWildcard: types.StringValue("*.preview.example.com"),
+			},
+			state:  base,
+			deploy: false,
+		},
+		{
+			name: "domain routing plus image still deploys",
+			plan: ApplicationResourceModel{
+				Name:          types.StringValue("api"),
+				DockerImage:   types.StringValue("nginx:alpine"),
+				Env:           types.StringValue("A=1"),
+				TraefikConfig: types.StringValue("http: {}"),
+			},
+			state:  base,
+			deploy: true,
+		},
+		{
+			name: "status and deploy flags do not deploy",
+			plan: ApplicationResourceModel{
+				Name:              types.StringValue("api"),
+				DockerImage:       types.StringValue("nginx:latest"),
+				Env:               types.StringValue("A=1"),
+				ApplicationStatus: types.StringValue("done"),
+				DeployOnCreate:    types.BoolValue(true),
+				DeployOnChange:    types.BoolValue(false),
+			},
+			state:  base,
+			deploy: false,
+		},
+		{
+			name: "unknown planned value does not deploy by itself",
+			plan: ApplicationResourceModel{
+				Name:        types.StringValue("api"),
+				DockerImage: types.StringValue("nginx:latest"),
+				Env:         types.StringUnknown(),
+			},
+			state:  base,
+			deploy: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := applicationRequiresDeploy(tt.plan, tt.state)
+			if got != tt.deploy {
+				t.Errorf("applicationRequiresDeploy() = %v, want %v", got, tt.deploy)
+			}
+		})
+	}
+}
 
 func TestAccApplicationResource(t *testing.T) {
 	host := os.Getenv("DOKPLOY_HOST")
@@ -52,8 +164,8 @@ func TestAccApplicationResource(t *testing.T) {
 				ImportStateVerifyIgnore: []string{
 					"branch", "owner", "repository", "github_id",
 					"dockerfile_path", "docker_context_path", "docker_build_stage",
-					"deploy_on_create", // Not returned by API
-					"title",            // Not returned by API on import
+					"deploy_on_create", "deploy_on_change", // Not returned by API
+					"title", // Not returned by API on import
 				},
 			},
 		},
@@ -98,7 +210,7 @@ func TestAccApplicationResourceWithGit(t *testing.T) {
 				ImportStateVerifyIgnore: []string{
 					"branch", "owner", "repository", "github_id",
 					"dockerfile_path", "docker_context_path", "docker_build_stage",
-					"deploy_on_create",
+					"deploy_on_create", "deploy_on_change",
 				},
 			},
 		},

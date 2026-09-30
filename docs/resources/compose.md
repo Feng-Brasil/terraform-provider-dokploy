@@ -250,13 +250,14 @@ resource "dokploy_compose" "server_specific" {
 - `bitbucket_repository` (String) Bitbucket repository name.
 - `branch` (String) Branch to deploy from (GitHub/GitLab/Bitbucket/Gitea).
 - `command` (String) Custom command to run for deployment.
-- `compose_file_content` (String) Raw docker-compose.yml content (for source_type 'raw'). When this value changes, apply updates the stack and triggers a deployment so the running services match the desired file.
+- `compose_file_content` (String) Raw docker-compose.yml content (for source_type 'raw'). When this value changes and deploy_on_change is true, apply updates the stack and triggers a deployment so the running services match the desired file.
 - `compose_path` (String) Path to the docker-compose.yml file in the repository.
 - `compose_type` (String) The compose type: 'docker-compose' (default) or 'stack' for Docker Swarm.
 - `custom_git_branch` (String) Branch to use for custom Git repository.
 - `custom_git_build_path` (String) Build path within the custom Git repository.
 - `custom_git_ssh_key_id` (String) SSH key ID for accessing the custom Git repository.
 - `custom_git_url` (String) Custom Git repository URL (for source_type 'git').
+- `deploy_on_change` (Boolean) When true (default), apply triggers a deployment if compose_file_content changed. Set to false to update the stack without deploying.
 - `deploy_on_create` (Boolean) Trigger a deployment after creating the compose stack.
 - `description` (String) A description of the compose stack.
 - `detach_dokploy_network` (Boolean) Detach the default dokploy-network from this compose service.
