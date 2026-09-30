@@ -157,7 +157,7 @@ func (r *ComposeResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"compose_file_content": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "Raw docker-compose.yml content (for source_type 'raw').",
+				Description: "Raw docker-compose.yml content (for source_type 'raw'). When this value changes, apply updates the stack and triggers a deployment so the running services match the desired file.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -782,6 +782,11 @@ func (r *ComposeResource) Update(ctx context.Context, req resource.UpdateRequest
 		comp.GiteaBranch = plan.GiteaBranch.ValueString()
 	}
 
+	// Capture this before readComposeIntoState replaces the planned file with
+	// the API response. Update runs only when the plan differs from state;
+	// deploy is limited to compose file edits.
+	composeFileChanged := composeFileContentChanged(plan.ComposeFileContent, state.ComposeFileContent)
+
 	updatedComp, err := r.client.UpdateCompose(comp)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating compose", err.Error())
@@ -790,6 +795,20 @@ func (r *ComposeResource) Update(ctx context.Context, req resource.UpdateRequest
 
 	readComposeIntoState(ctx, &plan, updatedComp, &resp.Diagnostics)
 	plan.Env = effectiveEnv
+
+	if composeFileChanged {
+		serverID := plan.ServerID.ValueString()
+		if plan.ServerID.IsNull() || plan.ServerID.IsUnknown() {
+			serverID = state.ServerID.ValueString()
+		}
+		if err := r.client.DeployCompose(plan.ID.ValueString(), serverID); err != nil {
+			resp.Diagnostics.AddError(
+				"Error deploying compose",
+				fmt.Sprintf("Compose stack was updated but deployment failed: %s", err.Error()),
+			)
+			return
+		}
+	}
 
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
@@ -820,6 +839,16 @@ func (r *ComposeResource) ImportState(ctx context.Context, req resource.ImportSt
 }
 
 // Helper functions
+
+// composeFileContentChanged reports whether the planned compose YAML differs
+// from the prior state. Unknown plan values are ignored so a sensitive or
+// deferred read cannot trigger a deploy on its own.
+func composeFileContentChanged(plan, state types.String) bool {
+	if plan.IsUnknown() {
+		return false
+	}
+	return !plan.Equal(state)
+}
 
 func inferComposeSourceType(plan *ComposeResourceModel) types.String {
 	if !plan.ComposeFileContent.IsNull() && !plan.ComposeFileContent.IsUnknown() && plan.ComposeFileContent.ValueString() != "" {
