@@ -37,6 +37,7 @@ Read-Only:
 - `environment_id` (String) The environment ID this application belongs to.
 - `id` (String) The unique identifier of the application.
 - `name` (String) The display name of the application.
+- `refresh_token` (String, Sensitive) Webhook token Dokploy accepts to trigger a deployment.
 - `replicas` (Number) Number of replicas.
 - `server_id` (String) Server ID the application is deployed to.
 - `source_type` (String) The source type: github, gitlab, bitbucket, gitea, git, docker, or drop.

@@ -28,6 +28,7 @@ type DestinationDataSourceModel struct {
 	Bucket          types.String `tfsdk:"bucket"`
 	Region          types.String `tfsdk:"region"`
 	Endpoint        types.String `tfsdk:"endpoint"`
+	AdditionalFlags types.List   `tfsdk:"additional_flags"`
 	ServerID        types.String `tfsdk:"server_id"`
 	OrganizationID  types.String `tfsdk:"organization_id"`
 	CreatedAt       types.String `tfsdk:"created_at"`
@@ -68,6 +69,11 @@ func (d *DestinationDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 			"endpoint": schema.StringAttribute{
 				Computed:    true,
 				Description: "Endpoint URL for the storage provider.",
+			},
+			"additional_flags": schema.ListAttribute{
+				Computed:    true,
+				ElementType: types.StringType,
+				Description: "Extra rclone flags configured on the destination.",
 			},
 			"server_id": schema.StringAttribute{
 				Computed:    true,
@@ -118,6 +124,7 @@ func (d *DestinationDataSource) Read(ctx context.Context, req datasource.ReadReq
 	data.Bucket = types.StringValue(dest.Bucket)
 	data.Region = types.StringValue(dest.Region)
 	data.Endpoint = types.StringValue(dest.Endpoint)
+	data.AdditionalFlags = stringListOrNull(ctx, dest.AdditionalFlags)
 	data.OrganizationID = types.StringValue(dest.OrganizationID)
 	data.CreatedAt = types.StringValue(dest.CreatedAt)
 

@@ -38,10 +38,12 @@ resource "dokploy_backup" "daily" {
 
 - `backup_type` (String) Type of backup: 'database' for database backups or 'compose' for compose service backups.
 - `compose_id` (String) ID of the compose to backup. Required when backup_type is 'compose'.
+- `custom_name` (String) Optional file name stem for backup objects. Must start with a letter or number and contain only letters, numbers, dots, hyphens, and underscores.
 - `database_id` (String) ID of the database to backup. Required when backup_type is 'database'.
-- `database_type` (String) Type of database: postgres, mysql, mariadb, or mongo. Required when backup_type is 'database'.
+- `database_type` (String) Type of database: postgres, mysql, mariadb, mongo, libsql, or web-server. Required when backup_type is 'database'.
 - `enabled` (Boolean) Whether the backup schedule is enabled.
-- `keep_latest_count` (Number) Number of recent backups to keep (older ones are deleted).
+- `include_encryption_key` (Boolean) Include the database encryption key in the backup archive.
+- `keep_latest_count` (Number) Number of recent backups to keep (older ones are deleted). Sent on every update because the API requires the field.
 - `metadata` (Map of String) Metadata for the backup configuration as key-value pairs.
 - `service_name` (String) Name of the service within the compose to backup. Required when backup_type is 'compose'.
 

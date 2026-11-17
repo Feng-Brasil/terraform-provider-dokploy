@@ -3,12 +3,12 @@
 page_title: "dokploy_postgres Resource - dokploy"
 subcategory: ""
 description: |-
-  Manages a PostgreSQL database instance in Dokploy.
+  Manages a PostgreSQL database instance in Dokploy. Create calls postgres.create, then postgres.update with the full configuration. postgres.deploy and postgres.start run on create only when deploy_on_create is true. Updates call postgres.update and, by default, postgres.deploy so Swarm settings take effect.
 ---
 
 # dokploy_postgres (Resource)
 
-Manages a PostgreSQL database instance in Dokploy.
+Manages a PostgreSQL database instance in Dokploy. Create calls postgres.create, then postgres.update with the full configuration. postgres.deploy and postgres.start run on create only when deploy_on_create is true. Updates call postgres.update and, by default, postgres.deploy so Swarm settings take effect.
 
 
 
@@ -17,28 +17,45 @@ Manages a PostgreSQL database instance in Dokploy.
 
 ### Required
 
-- `app_name` (String) Application name prefix for the PostgreSQL instance. Dokploy will append a random suffix.
+- `app_name` (String) Application name prefix. Dokploy appends a random suffix and keeps that generated name as the Swarm service name. The configured prefix is stored in state.
 - `database_name` (String) Name of the database to create.
-- `database_password` (String, Sensitive) Password for the database user.
+- `database_password` (String, Sensitive) Password for the database user. On update, the provider also calls postgres.changePassword when a container is already running.
 - `database_user` (String) Database user name.
 - `environment_id` (String) ID of the environment to deploy the PostgreSQL instance in.
 - `name` (String) Name of the PostgreSQL instance.
 
 ### Optional
 
+- `args` (List of String) Arguments passed to the container command.
 - `command` (String) Custom command to run in the container.
 - `cpu_limit` (String) CPU limit for the container.
 - `cpu_reservation` (String) CPU reservation for the container.
+- `deploy_on_create` (Boolean) When true, create calls postgres.deploy and then postgres.start after the instance is configured. Defaults to false so volumes and bind mounts can be attached before the service starts. Use the dokploy_postgres_start action to start it later.
+- `deploy_on_update` (Boolean) When true (default), an update calls postgres.deploy after postgres.update so Swarm, resource, and image changes are applied. Set to false to store the configuration without redeploying.
 - `description` (String) Description of the PostgreSQL instance.
-- `docker_image` (String) Docker image to use (defaults to postgres:15).
-- `env` (String) Environment variables for the container.
+- `detach_dokploy_network` (Boolean) Detach the service from the default Dokploy network.
+- `docker_image` (String) Docker image to use. Dokploy defaults to postgres:18 when this is omitted.
+- `endpoint_spec_swarm` (String) Docker Swarm endpoint spec (JSON object). Keys: Mode, Ports.
+- `env` (String) Environment variables for the container, in KEY=VALUE lines.
 - `external_port` (Number) External port to expose the PostgreSQL instance.
+- `health_check_swarm` (String) Docker Swarm health check (JSON object). Keys match the Dokploy schema: Test, Interval, Timeout, StartPeriod, Retries.
+- `labels_swarm` (String) Docker Swarm service labels (JSON object of string keys and values).
 - `memory_limit` (String) Memory limit for the container.
 - `memory_reservation` (String) Memory reservation for the container.
+- `mode_swarm` (String) Docker Swarm service mode (JSON object). Keys: Replicated, Global, ReplicatedJob, GlobalJob.
+- `network_ids` (List of String) Dokploy network IDs to attach.
+- `network_swarm` (String) Docker Swarm networks (JSON array). Each item may set Target, Aliases, and DriverOpts.
+- `placement_swarm` (String) Docker Swarm placement (JSON object). Keys: Constraints, Preferences, MaxReplicas, Platforms.
 - `replicas` (Number) Number of replicas for the PostgreSQL instance.
+- `restart_policy_swarm` (String) Docker Swarm restart policy (JSON object). Keys: Condition, Delay, MaxAttempts, Window.
+- `rollback_config_swarm` (String) Docker Swarm rollback config (JSON object). Same keys as update_config_swarm.
 - `server_id` (String) ID of the server to deploy the PostgreSQL instance on.
+- `stop_grace_period_swarm` (Number) Stop grace period in nanoseconds for Docker Swarm mode.
+- `ulimits_swarm` (String) Docker Swarm ulimits (JSON array). Each item has Name, Soft, and Hard.
+- `update_config_swarm` (String) Docker Swarm update config (JSON object). Keys: Parallelism, Delay, FailureAction, Monitor, MaxFailureRatio, Order.
 
 ### Read-Only
 
 - `application_status` (String) Current status of the PostgreSQL application (idle, running, done, error).
 - `id` (String) Unique identifier for the PostgreSQL instance.
+- `resolved_app_name` (String) Swarm service name Dokploy generated from app_name, including the random suffix.

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/feng-brasil/terraform-provider-dokploy/internal/client"
@@ -31,19 +32,21 @@ type BackupResource struct {
 }
 
 type BackupResourceModel struct {
-	ID              types.String `tfsdk:"id"`
-	DestinationID   types.String `tfsdk:"destination_id"`
-	BackupType      types.String `tfsdk:"backup_type"`
-	DatabaseID      types.String `tfsdk:"database_id"`
-	DatabaseType    types.String `tfsdk:"database_type"`
-	ComposeID       types.String `tfsdk:"compose_id"`
-	ServiceName     types.String `tfsdk:"service_name"`
-	Schedule        types.String `tfsdk:"schedule"`
-	Enabled         types.Bool   `tfsdk:"enabled"`
-	Prefix          types.String `tfsdk:"prefix"`
-	Database        types.String `tfsdk:"database"`
-	KeepLatestCount types.Int64  `tfsdk:"keep_latest_count"`
-	Metadata        types.Map    `tfsdk:"metadata"`
+	ID                   types.String `tfsdk:"id"`
+	DestinationID        types.String `tfsdk:"destination_id"`
+	BackupType           types.String `tfsdk:"backup_type"`
+	DatabaseID           types.String `tfsdk:"database_id"`
+	DatabaseType         types.String `tfsdk:"database_type"`
+	ComposeID            types.String `tfsdk:"compose_id"`
+	ServiceName          types.String `tfsdk:"service_name"`
+	Schedule             types.String `tfsdk:"schedule"`
+	Enabled              types.Bool   `tfsdk:"enabled"`
+	Prefix               types.String `tfsdk:"prefix"`
+	Database             types.String `tfsdk:"database"`
+	KeepLatestCount      types.Int64  `tfsdk:"keep_latest_count"`
+	CustomName           types.String `tfsdk:"custom_name"`
+	IncludeEncryptionKey types.Bool   `tfsdk:"include_encryption_key"`
+	Metadata             types.Map    `tfsdk:"metadata"`
 }
 
 func (r *BackupResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -86,9 +89,9 @@ func (r *BackupResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 			"database_type": schema.StringAttribute{
 				Optional:    true,
-				Description: "Type of database: postgres, mysql, mariadb, or mongo. Required when backup_type is 'database'.",
+				Description: "Type of database: postgres, mysql, mariadb, mongo, libsql, or web-server. Required when backup_type is 'database'.",
 				Validators: []validator.String{
-					stringvalidator.OneOf("postgres", "mysql", "mariadb", "mongo"),
+					stringvalidator.OneOf("postgres", "mysql", "mariadb", "mongo", "libsql", "web-server"),
 				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -127,7 +130,24 @@ func (r *BackupResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Optional:    true,
 				Computed:    true,
 				Default:     int64default.StaticInt64(30),
-				Description: "Number of recent backups to keep (older ones are deleted).",
+				Description: "Number of recent backups to keep (older ones are deleted). Sent on every update because the API requires the field.",
+			},
+			"custom_name": schema.StringAttribute{
+				Optional:    true,
+				Description: "Optional file name stem for backup objects. Must start with a letter or number and contain only letters, numbers, dots, hyphens, and underscores.",
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(100),
+					stringvalidator.RegexMatches(
+						regexp.MustCompile(`^([a-zA-Z0-9][a-zA-Z0-9._-]*)?$`),
+						"must start with a letter or number and contain only letters, numbers, dots, hyphens, and underscores",
+					),
+				},
+			},
+			"include_encryption_key": schema.BoolAttribute{
+				Optional:    true,
+				Computed:    true,
+				Default:     booldefault.StaticBool(true),
+				Description: "Include the database encryption key in the backup archive.",
 			},
 			"metadata": schema.MapAttribute{
 				Optional:    true,
@@ -166,12 +186,13 @@ func (r *BackupResource) Create(ctx context.Context, req resource.CreateRequest,
 	// Validate required fields based on backup_type
 	switch backupType {
 	case "database":
-		if plan.DatabaseID.IsNull() || plan.DatabaseID.ValueString() == "" {
-			resp.Diagnostics.AddError("Missing required field", "database_id is required when backup_type is 'database'")
+		databaseType := plan.DatabaseType.ValueString()
+		if databaseType == "" {
+			resp.Diagnostics.AddError("Missing required field", "database_type is required when backup_type is 'database'")
 			return
 		}
-		if plan.DatabaseType.IsNull() || plan.DatabaseType.ValueString() == "" {
-			resp.Diagnostics.AddError("Missing required field", "database_type is required when backup_type is 'database'")
+		if databaseType != "web-server" && (plan.DatabaseID.IsNull() || plan.DatabaseID.ValueString() == "") {
+			resp.Diagnostics.AddError("Missing required field", "database_id is required when backup_type is 'database' and database_type is not 'web-server'")
 			return
 		}
 	case "compose":
@@ -186,13 +207,17 @@ func (r *BackupResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 
 	backup := client.Backup{
-		DestinationID:   plan.DestinationID.ValueString(),
-		Schedule:        plan.Schedule.ValueString(),
-		Enabled:         plan.Enabled.ValueBool(),
-		Prefix:          plan.Prefix.ValueString(),
-		Database:        plan.Database.ValueString(),
-		KeepLatestCount: int(plan.KeepLatestCount.ValueInt64()),
-		BackupType:      backupType,
+		DestinationID:        plan.DestinationID.ValueString(),
+		Schedule:             plan.Schedule.ValueString(),
+		Enabled:              plan.Enabled.ValueBool(),
+		Prefix:               plan.Prefix.ValueString(),
+		Database:             plan.Database.ValueString(),
+		KeepLatestCount:      int(plan.KeepLatestCount.ValueInt64()),
+		BackupType:           backupType,
+		IncludeEncryptionKey: plan.IncludeEncryptionKey.ValueBool(),
+	}
+	if !plan.CustomName.IsNull() && !plan.CustomName.IsUnknown() {
+		backup.CustomName = plan.CustomName.ValueString()
 	}
 
 	// Set metadata if provided
@@ -203,7 +228,7 @@ func (r *BackupResource) Create(ctx context.Context, req resource.CreateRequest,
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		backup.Metadata = metadataMap
+		backup.Metadata = client.BackupMetadata(metadataMap)
 	}
 
 	switch backupType {
@@ -219,6 +244,10 @@ func (r *BackupResource) Create(ctx context.Context, req resource.CreateRequest,
 			backup.MariadbID = databaseID
 		case "mongo":
 			backup.MongoID = databaseID
+		case "libsql":
+			backup.LibsqlID = databaseID
+		case "web-server":
+			// web-server backups are authorized by destination access and have no service id.
 		}
 	case "compose":
 		backup.ComposeID = plan.ComposeID.ValueString()
@@ -244,9 +273,13 @@ func (r *BackupResource) Create(ctx context.Context, req resource.CreateRequest,
 	plan.Database = types.StringValue(createdBackup.Database)
 	plan.KeepLatestCount = types.Int64Value(int64(createdBackup.KeepLatestCount))
 	plan.BackupType = types.StringValue(createdBackup.BackupType)
+	plan.IncludeEncryptionKey = types.BoolValue(createdBackup.IncludeEncryptionKey || plan.IncludeEncryptionKey.ValueBool())
 
 	if createdBackup.ServiceName != "" {
 		plan.ServiceName = types.StringValue(createdBackup.ServiceName)
+	}
+	if createdBackup.CustomName != "" {
+		plan.CustomName = types.StringValue(createdBackup.CustomName)
 	}
 
 	diags = resp.State.Set(ctx, plan)
@@ -278,6 +311,8 @@ func (r *BackupResource) Read(ctx context.Context, req resource.ReadRequest, res
 	state.Database = types.StringValue(backup.Database)
 	state.KeepLatestCount = types.Int64Value(int64(backup.KeepLatestCount))
 	state.BackupType = types.StringValue(backup.BackupType)
+	state.IncludeEncryptionKey = types.BoolValue(backup.IncludeEncryptionKey)
+	state.CustomName = stringOrNull(backup.CustomName)
 
 	// Set database_type for both database and compose backups (API returns it for both)
 	if backup.DatabaseType != "" {
@@ -289,13 +324,25 @@ func (r *BackupResource) Read(ctx context.Context, req resource.ReadRequest, res
 		// Extract database_id from the appropriate type-specific field
 		switch backup.DatabaseType {
 		case "postgres":
-			state.DatabaseID = types.StringValue(backup.PostgresID)
+			if backup.PostgresID != "" {
+				state.DatabaseID = types.StringValue(backup.PostgresID)
+			}
 		case "mysql":
-			state.DatabaseID = types.StringValue(backup.MysqlID)
+			if backup.MysqlID != "" {
+				state.DatabaseID = types.StringValue(backup.MysqlID)
+			}
 		case "mariadb":
-			state.DatabaseID = types.StringValue(backup.MariadbID)
+			if backup.MariadbID != "" {
+				state.DatabaseID = types.StringValue(backup.MariadbID)
+			}
 		case "mongo":
-			state.DatabaseID = types.StringValue(backup.MongoID)
+			if backup.MongoID != "" {
+				state.DatabaseID = types.StringValue(backup.MongoID)
+			}
+		case "libsql":
+			if backup.LibsqlID != "" {
+				state.DatabaseID = types.StringValue(backup.LibsqlID)
+			}
 		}
 	case "compose":
 		state.ComposeID = types.StringValue(backup.ComposeID)
@@ -306,7 +353,7 @@ func (r *BackupResource) Read(ctx context.Context, req resource.ReadRequest, res
 
 	// Read metadata if present
 	if len(backup.Metadata) > 0 {
-		state.Metadata, diags = types.MapValueFrom(ctx, types.StringType, backup.Metadata)
+		state.Metadata, diags = types.MapValueFrom(ctx, types.StringType, map[string]string(backup.Metadata))
 		resp.Diagnostics.Append(diags...)
 	} else {
 		state.Metadata = types.MapNull(types.StringType)
@@ -330,13 +377,17 @@ func (r *BackupResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 
 	backup := client.Backup{
-		BackupID:        plan.ID.ValueString(),
-		DestinationID:   plan.DestinationID.ValueString(),
-		Schedule:        plan.Schedule.ValueString(),
-		Enabled:         plan.Enabled.ValueBool(),
-		Prefix:          plan.Prefix.ValueString(),
-		Database:        plan.Database.ValueString(),
-		KeepLatestCount: int(plan.KeepLatestCount.ValueInt64()),
+		BackupID:             plan.ID.ValueString(),
+		DestinationID:        plan.DestinationID.ValueString(),
+		Schedule:             plan.Schedule.ValueString(),
+		Enabled:              plan.Enabled.ValueBool(),
+		Prefix:               plan.Prefix.ValueString(),
+		Database:             plan.Database.ValueString(),
+		KeepLatestCount:      int(plan.KeepLatestCount.ValueInt64()),
+		IncludeEncryptionKey: !plan.IncludeEncryptionKey.IsNull() && !plan.IncludeEncryptionKey.IsUnknown() && plan.IncludeEncryptionKey.ValueBool(),
+	}
+	if !plan.CustomName.IsNull() && !plan.CustomName.IsUnknown() {
+		backup.CustomName = plan.CustomName.ValueString()
 	}
 
 	// Set metadata if provided
@@ -347,10 +398,8 @@ func (r *BackupResource) Update(ctx context.Context, req resource.UpdateRequest,
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		backup.Metadata = metadataMap
+		backup.Metadata = client.BackupMetadata(metadataMap)
 	}
-
-	// Set database type for the update API
 	if !plan.DatabaseType.IsNull() && plan.DatabaseType.ValueString() != "" {
 		backup.DatabaseType = plan.DatabaseType.ValueString()
 	} else {
@@ -373,6 +422,10 @@ func (r *BackupResource) Update(ctx context.Context, req resource.UpdateRequest,
 	plan.Prefix = types.StringValue(updatedBackup.Prefix)
 	plan.Database = types.StringValue(updatedBackup.Database)
 	plan.KeepLatestCount = types.Int64Value(int64(updatedBackup.KeepLatestCount))
+	plan.IncludeEncryptionKey = types.BoolValue(updatedBackup.IncludeEncryptionKey || plan.IncludeEncryptionKey.ValueBool())
+	if updatedBackup.CustomName != "" {
+		plan.CustomName = types.StringValue(updatedBackup.CustomName)
+	}
 
 	if updatedBackup.ServiceName != "" {
 		plan.ServiceName = types.StringValue(updatedBackup.ServiceName)

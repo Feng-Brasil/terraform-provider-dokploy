@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/feng-brasil/terraform-provider-dokploy/internal/client"
+	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -15,6 +16,7 @@ import (
 
 var _ provider.Provider = &DokployProvider{}
 var _ provider.ProviderWithFunctions = &DokployProvider{}
+var _ provider.ProviderWithActions = &DokployProvider{}
 
 type DokployProvider struct {
 	version string
@@ -90,9 +92,10 @@ func (p *DokployProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// Create client
 	c := client.NewDokployClient(config.Host.ValueString(), apiKey)
 
-	// Make client available to resources
+	// Make client available to resources, data sources, and actions.
 	resp.ResourceData = c
 	resp.DataSourceData = c
+	resp.ActionData = c
 }
 
 func (p *DokployProvider) Resources(_ context.Context) []func() resource.Resource {
@@ -161,6 +164,12 @@ func (p *DokployProvider) DataSources(_ context.Context) []func() datasource.Dat
 
 func (p *DokployProvider) Functions(_ context.Context) []func() function.Function {
 	return []func() function.Function{}
+}
+
+func (p *DokployProvider) Actions(_ context.Context) []func() action.Action {
+	return []func() action.Action{
+		NewPostgresStartAction,
+	}
 }
 
 func New(version string) func() provider.Provider {

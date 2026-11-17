@@ -22,6 +22,7 @@ Fetches a single Dokploy backup destination by its ID.
 ### Read-Only
 
 - `access_key` (String) Access key for the storage provider.
+- `additional_flags` (List of String) Extra rclone flags configured on the destination.
 - `bucket` (String) Bucket name for storing backups.
 - `created_at` (String) Timestamp when the destination was created.
 - `endpoint` (String) Endpoint URL for the storage provider.

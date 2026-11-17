@@ -38,7 +38,8 @@ resource "dokploy_destination" "s3" {
 
 ### Optional
 
-- `server_id` (String) Server ID for remote server destinations
+- `additional_flags` (List of String) Extra rclone flags sent to destination.create and destination.update. The API requires this field, so an omitted value is sent as an empty array. Each flag must start with --, for example --s3-sign-accept-encoding=false.
+- `server_id` (String) Optional server ID accepted by the destination API for remote execution. The destination record itself does not persist this column; the configured value is kept in state.
 
 ### Read-Only
 

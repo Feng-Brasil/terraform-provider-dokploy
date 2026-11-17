@@ -34,6 +34,7 @@ Fetches a single Dokploy application by its ID.
 - `environment_id` (String) The environment ID this application belongs to.
 - `name` (String) The display name of the application.
 - `owner` (String) GitHub repository owner.
+- `refresh_token` (String, Sensitive) Webhook token Dokploy accepts to trigger a deployment. Empty when the API key cannot deploy.
 - `registry_url` (String) Docker registry URL.
 - `replicas` (Number) Number of replicas.
 - `repository` (String) GitHub repository name.

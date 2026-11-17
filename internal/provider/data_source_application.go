@@ -57,6 +57,9 @@ type ApplicationDataSourceModel struct {
 
 	// Timestamps
 	CreatedAt types.String `tfsdk:"created_at"`
+
+	// Webhook token returned by application.one when the caller can deploy.
+	RefreshToken types.String `tfsdk:"refresh_token"`
 }
 
 func (d *ApplicationDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -147,6 +150,11 @@ func (d *ApplicationDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 				Computed:    true,
 				Description: "Timestamp when the application was created.",
 			},
+			"refresh_token": schema.StringAttribute{
+				Computed:    true,
+				Sensitive:   true,
+				Description: "Webhook token Dokploy accepts to trigger a deployment. Empty when the API key cannot deploy.",
+			},
 		},
 	}
 }
@@ -187,6 +195,11 @@ func (d *ApplicationDataSource) Read(ctx context.Context, req datasource.ReadReq
 	data.Replicas = types.Int64Value(int64(app.Replicas))
 	data.ApplicationStatus = types.StringValue(app.ApplicationStatus)
 	data.CreatedAt = types.StringValue(app.CreatedAt)
+	if app.RefreshToken != "" {
+		data.RefreshToken = types.StringValue(app.RefreshToken)
+	} else {
+		data.RefreshToken = types.StringNull()
+	}
 
 	// Optional fields
 	if app.Description != "" {

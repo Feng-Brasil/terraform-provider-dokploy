@@ -3,16 +3,23 @@ package provider
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/feng-brasil/terraform-provider-dokploy/internal/client"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+var destinationFlagPattern = regexp.MustCompile(`^--[a-zA-Z0-9-]+(=[a-zA-Z0-9._:/@-]+)?$`)
 
 var _ resource.Resource = &DestinationResource{}
 var _ resource.ResourceWithImportState = &DestinationResource{}
@@ -34,6 +41,7 @@ type DestinationResourceModel struct {
 	Bucket          types.String `tfsdk:"bucket"`
 	Region          types.String `tfsdk:"region"`
 	Endpoint        types.String `tfsdk:"endpoint"`
+	AdditionalFlags types.List   `tfsdk:"additional_flags"`
 	ServerID        types.String `tfsdk:"server_id"`
 }
 
@@ -81,9 +89,20 @@ func (r *DestinationResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Required:    true,
 				Description: "Endpoint URL for the storage provider",
 			},
+			"additional_flags": schema.ListAttribute{
+				Optional:    true,
+				ElementType: types.StringType,
+				Description: "Extra rclone flags sent to destination.create and destination.update. The API requires this field, so an omitted value is sent as an empty array. Each flag must start with --, for example --s3-sign-accept-encoding=false.",
+				Validators: []validator.List{
+					listvalidator.ValueStringsAre(stringvalidator.RegexMatches(
+						destinationFlagPattern,
+						"must start with -- and contain only letters, numbers, and . _ : / @ - (for example --s3-sign-accept-encoding=false)",
+					)),
+				},
+			},
 			"server_id": schema.StringAttribute{
 				Optional:    true,
-				Description: "Server ID for remote server destinations",
+				Description: "Optional server ID accepted by the destination API for remote execution. The destination record itself does not persist this column; the configured value is kept in state.",
 			},
 		},
 	}
@@ -109,18 +128,10 @@ func (r *DestinationResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
-	dest := client.Destination{
-		Name:            plan.Name.ValueString(),
-		Provider:        plan.StorageProvider.ValueString(),
-		AccessKey:       plan.AccessKey.ValueString(),
-		SecretAccessKey: plan.SecretAccessKey.ValueString(),
-		Bucket:          plan.Bucket.ValueString(),
-		Region:          plan.Region.ValueString(),
-		Endpoint:        plan.Endpoint.ValueString(),
-	}
-	if !plan.ServerID.IsNull() && !plan.ServerID.IsUnknown() {
-		serverID := plan.ServerID.ValueString()
-		dest.ServerID = &serverID
+	dest, diags := destinationFromPlan(ctx, &plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
 	createdDest, err := r.client.CreateDestination(dest)
@@ -129,19 +140,10 @@ func (r *DestinationResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
+	// Keep configured values. The API echoes the same fields, and replacing a
+	// null additional_flags with [] would fail the apply consistency check.
 	plan.ID = types.StringValue(createdDest.DestinationID)
-	plan.Name = types.StringValue(createdDest.Name)
-	plan.StorageProvider = types.StringValue(createdDest.Provider)
-	plan.AccessKey = types.StringValue(createdDest.AccessKey)
-	plan.Bucket = types.StringValue(createdDest.Bucket)
-	plan.Region = types.StringValue(createdDest.Region)
-	plan.Endpoint = types.StringValue(createdDest.Endpoint)
-	if createdDest.ServerID != nil {
-		plan.ServerID = types.StringValue(*createdDest.ServerID)
-	} else {
-		plan.ServerID = types.StringNull()
-	}
-	// Don't update secret_access_key from response as it's sensitive
+	plan.ServerID = preserveServerID(plan.ServerID, createdDest.ServerID)
 
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
@@ -171,11 +173,8 @@ func (r *DestinationResource) Read(ctx context.Context, req resource.ReadRequest
 	state.Bucket = types.StringValue(dest.Bucket)
 	state.Region = types.StringValue(dest.Region)
 	state.Endpoint = types.StringValue(dest.Endpoint)
-	if dest.ServerID != nil {
-		state.ServerID = types.StringValue(*dest.ServerID)
-	} else {
-		state.ServerID = types.StringNull()
-	}
+	state.AdditionalFlags = additionalFlagsState(ctx, state.AdditionalFlags, dest.AdditionalFlags)
+	state.ServerID = preserveServerID(state.ServerID, dest.ServerID)
 	// Don't update secret_access_key from API response
 
 	diags = resp.State.Set(ctx, state)
@@ -190,28 +189,12 @@ func (r *DestinationResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
-	dest := client.Destination{
-		DestinationID:   plan.ID.ValueString(),
-		Name:            plan.Name.ValueString(),
-		Provider:        plan.StorageProvider.ValueString(),
-		AccessKey:       plan.AccessKey.ValueString(),
-		SecretAccessKey: plan.SecretAccessKey.ValueString(),
-		Bucket:          plan.Bucket.ValueString(),
-		Region:          plan.Region.ValueString(),
-		Endpoint:        plan.Endpoint.ValueString(),
+	dest, diags := destinationFromPlan(ctx, &plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	// Handle ServerID updates explicitly:
-	// - Unknown: do not modify dest.ServerID (no change requested)
-	// - Non-null: set dest.ServerID to the provided value
-	// - Null (known): explicitly set dest.ServerID to nil so the API can unset it
-	if !plan.ServerID.IsUnknown() {
-		if plan.ServerID.IsNull() {
-			dest.ServerID = nil
-		} else {
-			serverID := plan.ServerID.ValueString()
-			dest.ServerID = &serverID
-		}
-	}
+	dest.DestinationID = plan.ID.ValueString()
 
 	updatedDest, err := r.client.UpdateDestination(dest)
 	if err != nil {
@@ -225,11 +208,8 @@ func (r *DestinationResource) Update(ctx context.Context, req resource.UpdateReq
 	plan.Bucket = types.StringValue(updatedDest.Bucket)
 	plan.Region = types.StringValue(updatedDest.Region)
 	plan.Endpoint = types.StringValue(updatedDest.Endpoint)
-	if updatedDest.ServerID != nil {
-		plan.ServerID = types.StringValue(*updatedDest.ServerID)
-	} else {
-		plan.ServerID = types.StringNull()
-	}
+	plan.AdditionalFlags = additionalFlagsState(ctx, plan.AdditionalFlags, updatedDest.AdditionalFlags)
+	plan.ServerID = preserveServerID(plan.ServerID, updatedDest.ServerID)
 
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
@@ -255,4 +235,47 @@ func (r *DestinationResource) Delete(ctx context.Context, req resource.DeleteReq
 
 func (r *DestinationResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func destinationFromPlan(ctx context.Context, plan *DestinationResourceModel) (client.Destination, diag.Diagnostics) {
+	dest := client.Destination{
+		Name:            plan.Name.ValueString(),
+		Provider:        plan.StorageProvider.ValueString(),
+		AccessKey:       plan.AccessKey.ValueString(),
+		SecretAccessKey: plan.SecretAccessKey.ValueString(),
+		Bucket:          plan.Bucket.ValueString(),
+		Region:          plan.Region.ValueString(),
+		Endpoint:        plan.Endpoint.ValueString(),
+		AdditionalFlags: []string{},
+	}
+	if flags, ok, diags := stringList(ctx, plan.AdditionalFlags); ok {
+		dest.AdditionalFlags = flags
+	} else if diags.HasError() {
+		return dest, diags
+	}
+	if !plan.ServerID.IsNull() && !plan.ServerID.IsUnknown() && plan.ServerID.ValueString() != "" {
+		serverID := plan.ServerID.ValueString()
+		dest.ServerID = &serverID
+	}
+	return dest, nil
+}
+
+func preserveServerID(current types.String, api *string) types.String {
+	if api != nil && *api != "" {
+		return types.StringValue(*api)
+	}
+	if !current.IsNull() && !current.IsUnknown() {
+		return current
+	}
+	return types.StringNull()
+}
+
+func additionalFlagsState(ctx context.Context, current types.List, flags []string) types.List {
+	if len(flags) == 0 {
+		if current.IsNull() || current.IsUnknown() {
+			return types.ListNull(types.StringType)
+		}
+		return current
+	}
+	return stringListOrNull(ctx, flags)
 }

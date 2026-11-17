@@ -160,6 +160,9 @@ type ApplicationResourceModel struct {
 	// Application status (computed)
 	ApplicationStatus types.String `tfsdk:"application_status"`
 
+	// Webhook token used by Dokploy deploy hooks. Returned by application.one.
+	RefreshToken types.String `tfsdk:"refresh_token"`
+
 	// Docker Swarm configuration (stored as JSON strings)
 	HealthCheckSwarm     types.String `tfsdk:"health_check_swarm"`
 	RestartPolicySwarm   types.String `tfsdk:"restart_policy_swarm"`
@@ -659,6 +662,14 @@ func (r *ApplicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Computed:    true,
 				Description: "Current status of the application: idle, running, done, error.",
 			},
+			"refresh_token": schema.StringAttribute{
+				Computed:    true,
+				Sensitive:   true,
+				Description: "Webhook token Dokploy accepts to trigger a deployment for this application. application.one returns it when the API key can deploy. The application.refreshToken endpoint rotates the token and does not return the new value; the next read picks up the rotated token.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 
 			// Docker Swarm configuration
 			"health_check_swarm": schema.StringAttribute{
@@ -989,6 +1000,7 @@ var applicationDeployIgnoredFields = map[string]struct{}{
 	"application_status": {},
 	"deploy_on_create":   {},
 	"deploy_on_change":   {},
+	"refresh_token":      {},
 }
 
 // applicationRequiresDeploy reports whether the plan changes something other
@@ -1607,6 +1619,7 @@ func updatePlanFromApplication(plan *ApplicationResourceModel, app *client.Appli
 
 	// Application status (computed)
 	plan.ApplicationStatus = types.StringValue(app.ApplicationStatus)
+	assignRefreshToken(&plan.RefreshToken, app.RefreshToken, false)
 
 	// Docker Swarm fields - convert maps to JSON strings
 	if app.HealthCheckSwarm != nil {
@@ -1963,6 +1976,7 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 
 	// Application status (computed)
 	state.ApplicationStatus = types.StringValue(app.ApplicationStatus)
+	assignRefreshToken(&state.RefreshToken, app.RefreshToken, true)
 
 	// Docker Swarm fields - convert maps to JSON strings
 	if app.HealthCheckSwarm != nil {
@@ -2012,6 +2026,18 @@ func readApplicationIntoState(state *ApplicationResourceModel, app *client.Appli
 		if jsonBytes, err := json.Marshal(app.EndpointSpecSwarm); err == nil {
 			state.EndpointSpecSwarm = types.StringValue(string(jsonBytes))
 		}
+	}
+}
+
+func assignRefreshToken(current *types.String, token string, overwrite bool) {
+	if token == "" {
+		if current.IsUnknown() {
+			*current = types.StringNull()
+		}
+		return
+	}
+	if overwrite || current.IsNull() || current.IsUnknown() || current.ValueString() == "" {
+		*current = types.StringValue(token)
 	}
 }
 

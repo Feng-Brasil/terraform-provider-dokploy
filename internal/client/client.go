@@ -826,6 +826,10 @@ type Application struct {
 	BuildSecrets  string `json:"buildSecrets"`
 	CreateEnvFile bool   `json:"createEnvFile"`
 
+	// Webhook token returned by application.one when the caller can deploy.
+	// application.refreshToken rotates this value and does not return it.
+	RefreshToken string `json:"refreshToken"`
+
 	// Runtime configuration (application.update)
 	// Note: The API accepts and returns memoryLimit/memoryReservation/cpuLimit/cpuReservation as strings
 	AutoDeploy              bool                `json:"autoDeploy"`
@@ -3837,20 +3841,25 @@ func (c *DokployClient) ListNetworks(serverID string) ([]Network, error) {
 
 // Destination represents a backup destination (S3, MinIO, etc.)
 type Destination struct {
-	DestinationID   string  `json:"destinationId"`
-	Name            string  `json:"name"`
-	Provider        string  `json:"provider"`
-	AccessKey       string  `json:"accessKey"`
-	SecretAccessKey string  `json:"secretAccessKey"`
-	Bucket          string  `json:"bucket"`
-	Region          string  `json:"region"`
-	Endpoint        string  `json:"endpoint"`
-	OrganizationID  string  `json:"organizationId"`
-	CreatedAt       string  `json:"createdAt"`
-	ServerID        *string `json:"serverId,omitempty"`
+	DestinationID   string   `json:"destinationId"`
+	Name            string   `json:"name"`
+	Provider        string   `json:"provider"`
+	AccessKey       string   `json:"accessKey"`
+	SecretAccessKey string   `json:"secretAccessKey"`
+	Bucket          string   `json:"bucket"`
+	Region          string   `json:"region"`
+	Endpoint        string   `json:"endpoint"`
+	AdditionalFlags []string `json:"additionalFlags"`
+	OrganizationID  string   `json:"organizationId"`
+	CreatedAt       string   `json:"createdAt"`
+	ServerID        *string  `json:"serverId,omitempty"`
 }
 
-func (c *DokployClient) CreateDestination(dest Destination) (*Destination, error) {
+func destinationPayload(dest Destination, includeID bool) map[string]interface{} {
+	flags := dest.AdditionalFlags
+	if flags == nil {
+		flags = []string{}
+	}
 	payload := map[string]interface{}{
 		"name":            dest.Name,
 		"provider":        dest.Provider,
@@ -3859,10 +3868,21 @@ func (c *DokployClient) CreateDestination(dest Destination) (*Destination, error
 		"bucket":          dest.Bucket,
 		"region":          dest.Region,
 		"endpoint":        dest.Endpoint,
+		// apiCreateDestination / apiUpdateDestination mark additionalFlags as
+		// required. Omitting it returns "expected nonoptional, received undefined".
+		"additionalFlags": flags,
+	}
+	if includeID {
+		payload["destinationId"] = dest.DestinationID
 	}
 	if dest.ServerID != nil {
 		payload["serverId"] = *dest.ServerID
 	}
+	return payload
+}
+
+func (c *DokployClient) CreateDestination(dest Destination) (*Destination, error) {
+	payload := destinationPayload(dest, false)
 
 	resp, err := c.doRequest("POST", "destination.create", payload)
 	if err != nil {
@@ -3891,19 +3911,7 @@ func (c *DokployClient) GetDestination(id string) (*Destination, error) {
 }
 
 func (c *DokployClient) UpdateDestination(dest Destination) (*Destination, error) {
-	payload := map[string]interface{}{
-		"destinationId":   dest.DestinationID,
-		"name":            dest.Name,
-		"provider":        dest.Provider,
-		"accessKey":       dest.AccessKey,
-		"secretAccessKey": dest.SecretAccessKey,
-		"bucket":          dest.Bucket,
-		"region":          dest.Region,
-		"endpoint":        dest.Endpoint,
-	}
-	if dest.ServerID != nil {
-		payload["serverId"] = *dest.ServerID
-	}
+	payload := destinationPayload(dest, true)
 
 	resp, err := c.doRequest("POST", "destination.update", payload)
 	if err != nil {
@@ -3940,23 +3948,56 @@ func (c *DokployClient) ListDestinations() ([]Destination, error) {
 
 // Backup represents a scheduled backup configuration.
 type Backup struct {
-	BackupID        string            `json:"backupId"`
-	AppName         string            `json:"appName"`
-	Schedule        string            `json:"schedule"`
-	Enabled         bool              `json:"enabled"`
-	Database        string            `json:"database"`
-	Prefix          string            `json:"prefix"`
-	DestinationID   string            `json:"destinationId"`
-	KeepLatestCount int               `json:"keepLatestCount"`
-	BackupType      string            `json:"backupType"`   // "database" or "compose"
-	DatabaseType    string            `json:"databaseType"` // "postgres", "mysql", "mariadb", "mongo"
-	PostgresID      string            `json:"postgresId"`
-	MysqlID         string            `json:"mysqlId"`
-	MariadbID       string            `json:"mariadbId"`
-	MongoID         string            `json:"mongoId"`
-	ComposeID       string            `json:"composeId"`
-	ServiceName     string            `json:"serviceName"`
-	Metadata        map[string]string `json:"metadata,omitempty"`
+	BackupID             string         `json:"backupId"`
+	AppName              string         `json:"appName"`
+	Schedule             string         `json:"schedule"`
+	Enabled              bool           `json:"enabled"`
+	Database             string         `json:"database"`
+	Prefix               string         `json:"prefix"`
+	DestinationID        string         `json:"destinationId"`
+	KeepLatestCount      int            `json:"keepLatestCount"`
+	BackupType           string         `json:"backupType"`   // "database" or "compose"
+	DatabaseType         string         `json:"databaseType"` // "postgres", "mysql", "mariadb", "mongo"
+	PostgresID           string         `json:"postgresId"`
+	MysqlID              string         `json:"mysqlId"`
+	MariadbID            string         `json:"mariadbId"`
+	MongoID              string         `json:"mongoId"`
+	ComposeID            string         `json:"composeId"`
+	ServiceName          string         `json:"serviceName"`
+	CustomName           string         `json:"customName"`
+	IncludeEncryptionKey bool           `json:"includeEncryptionKey"`
+	LibsqlID             string         `json:"libsqlId"`
+	Metadata             BackupMetadata `json:"metadata,omitempty"`
+}
+
+// BackupMetadata accepts the flat string maps this provider writes and the
+// nested objects Dokploy stores for compose backups.
+type BackupMetadata map[string]string
+
+func (m *BackupMetadata) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		return nil
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	out := make(BackupMetadata, len(raw))
+	for key, value := range raw {
+		switch typed := value.(type) {
+		case string:
+			out[key] = typed
+		case nil:
+		default:
+			encoded, err := json.Marshal(typed)
+			if err != nil {
+				continue
+			}
+			out[key] = string(encoded)
+		}
+	}
+	*m = out
+	return nil
 }
 
 func (c *DokployClient) CreateBackup(backup Backup) (*Backup, error) {
@@ -3987,12 +4028,19 @@ func (c *DokployClient) CreateBackup(backup Backup) (*Backup, error) {
 	if backup.MongoID != "" {
 		payload["mongoId"] = backup.MongoID
 	}
+	if backup.LibsqlID != "" {
+		payload["libsqlId"] = backup.LibsqlID
+	}
 	if backup.ComposeID != "" {
 		payload["composeId"] = backup.ComposeID
 	}
 	if backup.ServiceName != "" {
 		payload["serviceName"] = backup.ServiceName
 	}
+	if backup.CustomName != "" {
+		payload["customName"] = backup.CustomName
+	}
+	payload["includeEncryptionKey"] = backup.IncludeEncryptionKey
 	if len(backup.Metadata) > 0 {
 		payload["metadata"] = backup.Metadata
 	}
@@ -4026,6 +4074,8 @@ func (c *DokployClient) CreateBackup(backup Backup) (*Backup, error) {
 				databaseID = backup.MariadbID
 			case "mongo":
 				databaseID = backup.MongoID
+			case "libsql":
+				databaseID = backup.LibsqlID
 			}
 
 			if databaseID == "" {
@@ -4072,24 +4122,31 @@ func (c *DokployClient) GetBackup(id string) (*Backup, error) {
 }
 
 func (c *DokployClient) UpdateBackup(backup Backup) (*Backup, error) {
-	// serviceName is required by API schema but can be empty string for database backups.
-	// It's only meaningful for compose backups where it specifies the service to backup.
-	payload := map[string]interface{}{
-		"backupId":      backup.BackupID,
-		"schedule":      backup.Schedule,
-		"enabled":       backup.Enabled,
-		"prefix":        backup.Prefix,
-		"destinationId": backup.DestinationID,
-		"database":      backup.Database,
-		"databaseType":  backup.DatabaseType,
-		"serviceName":   backup.ServiceName,
+	// apiUpdateBackup requires every picked key to be present. Nullable fields
+	// are sent as JSON null when unset so Zod does not see undefined.
+	var serviceName interface{}
+	if backup.ServiceName != "" {
+		serviceName = backup.ServiceName
 	}
-
-	if backup.KeepLatestCount > 0 {
-		payload["keepLatestCount"] = backup.KeepLatestCount
-	}
+	var metadata interface{}
 	if len(backup.Metadata) > 0 {
-		payload["metadata"] = backup.Metadata
+		metadata = backup.Metadata
+	}
+	payload := map[string]interface{}{
+		"backupId":             backup.BackupID,
+		"schedule":             backup.Schedule,
+		"enabled":              backup.Enabled,
+		"prefix":               backup.Prefix,
+		"destinationId":        backup.DestinationID,
+		"database":             backup.Database,
+		"databaseType":         backup.DatabaseType,
+		"keepLatestCount":      backup.KeepLatestCount,
+		"serviceName":          serviceName,
+		"metadata":             metadata,
+		"includeEncryptionKey": backup.IncludeEncryptionKey,
+	}
+	if backup.CustomName != "" {
+		payload["customName"] = backup.CustomName
 	}
 
 	resp, err := c.doRequest("POST", "backup.update", payload)
@@ -4273,26 +4330,63 @@ func (c *DokployClient) DeleteServer(id string) error {
 // --- Postgres ---
 
 // Postgres represents a PostgreSQL database instance.
+// Set flags distinguish "omit this field" from a deliberate zero value on update.
+// apiUpdatePostgres accepts every create column except serverId and environmentId,
+// including Docker Swarm settings.
 type Postgres struct {
-	PostgresID        string `json:"postgresId"`
-	Name              string `json:"name"`
-	AppName           string `json:"appName"`
-	Description       string `json:"description"`
-	DatabaseName      string `json:"databaseName"`
-	DatabaseUser      string `json:"databaseUser"`
-	DatabasePassword  string `json:"databasePassword"`
-	DockerImage       string `json:"dockerImage"`
-	Command           string `json:"command"`
-	Env               string `json:"env"`
-	MemoryReservation string `json:"memoryReservation"`
-	MemoryLimit       string `json:"memoryLimit"`
-	CPUReservation    string `json:"cpuReservation"`
-	CPULimit          string `json:"cpuLimit"`
-	ExternalPort      int    `json:"externalPort"`
-	EnvironmentID     string `json:"environmentId"`
-	ApplicationStatus string `json:"applicationStatus"`
-	Replicas          int    `json:"replicas"`
-	ServerID          string `json:"serverId"`
+	PostgresID        string   `json:"postgresId"`
+	Name              string   `json:"name"`
+	AppName           string   `json:"appName"`
+	Description       string   `json:"description"`
+	DatabaseName      string   `json:"databaseName"`
+	DatabaseUser      string   `json:"databaseUser"`
+	DatabasePassword  string   `json:"databasePassword"`
+	DockerImage       string   `json:"dockerImage"`
+	Command           string   `json:"command"`
+	Args              []string `json:"args"`
+	Env               string   `json:"env"`
+	MemoryReservation string   `json:"memoryReservation"`
+	MemoryLimit       string   `json:"memoryLimit"`
+	CPUReservation    string   `json:"cpuReservation"`
+	CPULimit          string   `json:"cpuLimit"`
+	ExternalPort      int      `json:"externalPort"`
+	EnvironmentID     string   `json:"environmentId"`
+	ApplicationStatus string   `json:"applicationStatus"`
+	Replicas          int      `json:"replicas"`
+	ServerID          string   `json:"serverId"`
+	CreatedAt         string   `json:"createdAt"`
+
+	HealthCheckSwarm     map[string]interface{}   `json:"healthCheckSwarm"`
+	RestartPolicySwarm   map[string]interface{}   `json:"restartPolicySwarm"`
+	PlacementSwarm       map[string]interface{}   `json:"placementSwarm"`
+	UpdateConfigSwarm    map[string]interface{}   `json:"updateConfigSwarm"`
+	RollbackConfigSwarm  map[string]interface{}   `json:"rollbackConfigSwarm"`
+	ModeSwarm            map[string]interface{}   `json:"modeSwarm"`
+	LabelsSwarm          map[string]interface{}   `json:"labelsSwarm"`
+	NetworkSwarm         []map[string]interface{} `json:"networkSwarm"`
+	StopGracePeriodSwarm *int64                   `json:"stopGracePeriodSwarm"`
+	EndpointSpecSwarm    map[string]interface{}   `json:"endpointSpecSwarm"`
+	UlimitsSwarm         []map[string]interface{} `json:"ulimitsSwarm"`
+	NetworkIds           []string                 `json:"networkIds"`
+	DetachDokployNetwork bool                     `json:"detachDokployNetwork"`
+
+	DescriptionSet          bool `json:"-"`
+	CommandSet              bool `json:"-"`
+	ArgsSet                 bool `json:"-"`
+	EnvSet                  bool `json:"-"`
+	MemoryReservationSet    bool `json:"-"`
+	MemoryLimitSet          bool `json:"-"`
+	CPUReservationSet       bool `json:"-"`
+	CPULimitSet             bool `json:"-"`
+	ExternalPortSet         bool `json:"-"`
+	ReplicasSet             bool `json:"-"`
+	DockerImageSet          bool `json:"-"`
+	DatabasePasswordSet     bool `json:"-"`
+	NetworkIdsSet           bool `json:"-"`
+	DetachDokployNetworkSet bool `json:"-"`
+	NetworkSwarmSet         bool `json:"-"`
+	UlimitsSwarmSet         bool `json:"-"`
+	StopGracePeriodSwarmSet bool `json:"-"`
 }
 
 // CreatePostgres creates a new PostgreSQL database instance.
@@ -4344,6 +4438,9 @@ func (c *DokployClient) GetPostgres(id string) (*Postgres, error) {
 }
 
 // UpdatePostgres updates an existing PostgreSQL instance.
+// postgres.update returns true; the updated record is read back.
+// appName, serverId and environmentId are not sent: the API ignores appName
+// on update and rejects moving server or environment through this endpoint.
 func (c *DokployClient) UpdatePostgres(postgres Postgres) (*Postgres, error) {
 	payload := map[string]interface{}{
 		"postgresId": postgres.PostgresID,
@@ -4352,47 +4449,96 @@ func (c *DokployClient) UpdatePostgres(postgres Postgres) (*Postgres, error) {
 	if postgres.Name != "" {
 		payload["name"] = postgres.Name
 	}
-	if postgres.AppName != "" {
-		payload["appName"] = postgres.AppName
-	}
-	if postgres.Description != "" {
+	if postgres.DescriptionSet {
 		payload["description"] = postgres.Description
 	}
-	if postgres.DatabaseName != "" {
-		payload["databaseName"] = postgres.DatabaseName
-	}
-	if postgres.DatabaseUser != "" {
-		payload["databaseUser"] = postgres.DatabaseUser
-	}
-	if postgres.DatabasePassword != "" {
+	if postgres.DatabasePasswordSet {
 		payload["databasePassword"] = postgres.DatabasePassword
 	}
-	if postgres.DockerImage != "" {
+	if postgres.DockerImageSet && postgres.DockerImage != "" {
 		payload["dockerImage"] = postgres.DockerImage
 	}
-	if postgres.Command != "" {
+	if postgres.CommandSet {
 		payload["command"] = postgres.Command
 	}
-	if postgres.Env != "" {
+	if postgres.ArgsSet {
+		args := postgres.Args
+		if args == nil {
+			args = []string{}
+		}
+		payload["args"] = args
+	}
+	if postgres.EnvSet {
 		payload["env"] = postgres.Env
 	}
-	if postgres.MemoryReservation != "" {
+	if postgres.MemoryReservationSet {
 		payload["memoryReservation"] = postgres.MemoryReservation
 	}
-	if postgres.MemoryLimit != "" {
+	if postgres.MemoryLimitSet {
 		payload["memoryLimit"] = postgres.MemoryLimit
 	}
-	if postgres.CPUReservation != "" {
+	if postgres.CPUReservationSet {
 		payload["cpuReservation"] = postgres.CPUReservation
 	}
-	if postgres.CPULimit != "" {
+	if postgres.CPULimitSet {
 		payload["cpuLimit"] = postgres.CPULimit
 	}
-	if postgres.ExternalPort > 0 {
+	if postgres.ExternalPortSet {
 		payload["externalPort"] = postgres.ExternalPort
 	}
-	if postgres.Replicas > 0 {
+	if postgres.ReplicasSet {
 		payload["replicas"] = postgres.Replicas
+	}
+	if postgres.HealthCheckSwarm != nil {
+		payload["healthCheckSwarm"] = postgres.HealthCheckSwarm
+	}
+	if postgres.RestartPolicySwarm != nil {
+		payload["restartPolicySwarm"] = postgres.RestartPolicySwarm
+	}
+	if postgres.PlacementSwarm != nil {
+		payload["placementSwarm"] = postgres.PlacementSwarm
+	}
+	if postgres.UpdateConfigSwarm != nil {
+		payload["updateConfigSwarm"] = postgres.UpdateConfigSwarm
+	}
+	if postgres.RollbackConfigSwarm != nil {
+		payload["rollbackConfigSwarm"] = postgres.RollbackConfigSwarm
+	}
+	if postgres.ModeSwarm != nil {
+		payload["modeSwarm"] = postgres.ModeSwarm
+	}
+	if postgres.LabelsSwarm != nil {
+		payload["labelsSwarm"] = postgres.LabelsSwarm
+	}
+	if postgres.NetworkSwarmSet {
+		network := postgres.NetworkSwarm
+		if network == nil {
+			network = []map[string]interface{}{}
+		}
+		payload["networkSwarm"] = network
+	}
+	if postgres.StopGracePeriodSwarmSet && postgres.StopGracePeriodSwarm != nil {
+		payload["stopGracePeriodSwarm"] = *postgres.StopGracePeriodSwarm
+	}
+	if postgres.EndpointSpecSwarm != nil {
+		payload["endpointSpecSwarm"] = postgres.EndpointSpecSwarm
+	}
+	if postgres.UlimitsSwarmSet {
+		ulimits := postgres.UlimitsSwarm
+		if ulimits == nil {
+			ulimits = []map[string]interface{}{}
+		}
+		payload["ulimitsSwarm"] = ulimits
+	}
+	if postgres.NetworkIdsSet {
+		ids := postgres.NetworkIds
+		if ids == nil {
+			ids = []string{}
+		}
+		payload["networkIds"] = ids
+	}
+	if postgres.DetachDokployNetworkSet {
+		payload["detachDokployNetwork"] = postgres.DetachDokployNetwork
 	}
 
 	resp, err := c.doRequest("POST", "postgres.update", payload)
@@ -4400,15 +4546,41 @@ func (c *DokployClient) UpdatePostgres(postgres Postgres) (*Postgres, error) {
 		return nil, err
 	}
 
-	if len(resp) == 0 {
+	if len(resp) == 0 || string(resp) == "true" {
 		return c.GetPostgres(postgres.PostgresID)
 	}
 
 	var result Postgres
-	if err := json.Unmarshal(resp, &result); err != nil {
+	if err := json.Unmarshal(resp, &result); err != nil || result.PostgresID == "" {
 		return c.GetPostgres(postgres.PostgresID)
 	}
 	return &result, nil
+}
+
+// DeployPostgres builds and converges the Swarm service for a Postgres instance.
+func (c *DokployClient) DeployPostgres(id string) error {
+	_, err := c.doRequest("POST", "postgres.deploy", map[string]string{
+		"postgresId": id,
+	})
+	return err
+}
+
+// StartPostgres scales the existing Swarm service to one replica.
+// The service must already exist; postgres.deploy creates it.
+func (c *DokployClient) StartPostgres(id string) error {
+	_, err := c.doRequest("POST", "postgres.start", map[string]string{
+		"postgresId": id,
+	})
+	return err
+}
+
+// ChangePostgresPassword alters the role password inside the running container.
+func (c *DokployClient) ChangePostgresPassword(id, password string) error {
+	_, err := c.doRequest("POST", "postgres.changePassword", map[string]string{
+		"postgresId": id,
+		"password":   password,
+	})
+	return err
 }
 
 // DeletePostgres removes a PostgreSQL instance by ID.

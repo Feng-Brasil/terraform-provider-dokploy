@@ -38,6 +38,14 @@ type ApplicationDataModel struct {
 	Replicas          types.Int64  `tfsdk:"replicas"`
 	ApplicationStatus types.String `tfsdk:"application_status"`
 	CreatedAt         types.String `tfsdk:"created_at"`
+	RefreshToken      types.String `tfsdk:"refresh_token"`
+}
+
+func refreshTokenValue(token string) types.String {
+	if token == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(token)
 }
 
 func (d *ApplicationsDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -105,6 +113,11 @@ func (d *ApplicationsDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 							Computed:    true,
 							Description: "Timestamp when the application was created.",
 						},
+						"refresh_token": schema.StringAttribute{
+							Computed:    true,
+							Sensitive:   true,
+							Description: "Webhook token Dokploy accepts to trigger a deployment.",
+						},
 					},
 				},
 			},
@@ -160,6 +173,7 @@ func (d *ApplicationsDataSource) Read(ctx context.Context, req datasource.ReadRe
 			Replicas:          types.Int64Value(int64(app.Replicas)),
 			ApplicationStatus: types.StringValue(app.ApplicationStatus),
 			CreatedAt:         types.StringValue(app.CreatedAt),
+			RefreshToken:      refreshTokenValue(app.RefreshToken),
 		}
 
 		// Optional fields

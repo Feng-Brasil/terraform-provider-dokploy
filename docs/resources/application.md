@@ -562,6 +562,7 @@ resource "dokploy_application" "drop_app" {
 
 - `application_status` (String) Current status of the application: idle, running, done, error.
 - `id` (String) The unique identifier of the application.
+- `refresh_token` (String, Sensitive) Webhook token Dokploy accepts to trigger a deployment for this application. application.one returns it when the API key can deploy. The application.refreshToken endpoint rotates the token and does not return the new value; the next read picks up the rotated token.
 
 ## Import
 
